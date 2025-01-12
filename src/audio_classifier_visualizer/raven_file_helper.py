@@ -1,5 +1,6 @@
 import csv
 import glob
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -27,6 +28,7 @@ class RavenLabel:
 
 class RavenFileHelper:
     def __init__(self,root_path=None):
+        self.logger = logging.getLogger(__name__)
         self.ddb = duckdb.connect()
         if root_path:
             self.root_path = root_path
@@ -289,7 +291,7 @@ class RavenFileHelper:
         )
         results = []
         for idx,(chunk,) in enumerate(streamer.stream()):
-            #print(idx,chunk.shape)
+            self.logger.debug("%d %s", idx, chunk.shape)
             results.append(chunk)
         return torch.cat(results)
 
@@ -299,7 +301,7 @@ class RavenFileHelper:
 
     def precompute_downsampled_pytorch_tensor(self, audio_filename, new_sr):
         cached_path = self.get_cached_path(audio_filename,new_sr)
-        print(audio_filename, f"resampling {audio_filename} to {new_sr} at {cached_path}")
+        self.logger.info("resampling %s to %d at %s", audio_filename, new_sr, cached_path)
         source_path = self.audio_filename_to_path[audio_filename]
         audio_samples = self.load_entire_wav_file(source_path,new_sr=new_sr)
         audio_samples = audio_samples.flatten().to(torch.float16)
@@ -424,10 +426,10 @@ if this_should_be_a_unit_test:=False:
     rfh = RavenFileHelper(root_path='/home/ron/proj/elephantlistening/data/Rumble')
     candidate_files = rfh.find_candidate_raven_files('/home/ron/proj/elephantlistening/data/Rumble')
     all_raven_files = rfh.all_raven_files_as_one_table(candidate_files)
-    print(all_raven_files.columns)
+    rfh.logger.debug(all_raven_files.columns)
     lbls = rfh.get_all_labels_for_wav_file('CEB1_20111010_000000.wav')
     for idx,row in enumerate(lbls):
-        print(row)
+        rfh.logger.debug(row)
         if idx>3:
             break
 
