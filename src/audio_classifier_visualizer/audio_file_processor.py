@@ -5,7 +5,7 @@ import torchaudio.io as tai
 from .triple_buffered_iterator import TripleBufferedIterator
 
 class AudioFileProcessor:
-    def __init__(self, aves_model, elephant_model, rumble_sr=500, device="cuda"):
+    def __init__(self, aves_model = None, elephant_model = None, rumble_sr=500, device="cuda"):
         self.aves_model = aves_model
         self.elephant_model = elephant_model
         self.rumble_sr = rumble_sr
