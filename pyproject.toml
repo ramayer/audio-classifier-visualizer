@@ -24,7 +24,18 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: CPython",
   "Programming Language :: Python :: Implementation :: PyPy",
 ]
-dependencies = []
+dependencies = [
+  "duckdb",
+  "einops>=0.7.0",
+  "librosa",
+  "matplotlib",
+  "torch",
+  "torchaudio",
+#  "elephant-rumble-inference @ git+https://github.com/ramayer/elephant-rumble-inference@v0.9.0-rc1",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [project.urls]
 Documentation = "https://github.com/Ron M/audio-classifier-visualizer#readme"
@@ -59,3 +70,14 @@ exclude_lines = [
   "if __name__ == .__main__.:",
   "if TYPE_CHECKING:",
 ]
+
+[tool.hatch.envs.test]
+dependencies = [
+  "pytest>=7.0.0",
+  "pytest-cov>=4.1.0",
+  "elephant-rumble-inference @ git+https://github.com/ramayer/elephant-rumble-inference@v0.9.0-rc1",
+]
+
+[tool.hatch.envs.test.scripts]
+test = "pytest {args:tests}"
+test-cov = "pytest --cov {args:tests}"
