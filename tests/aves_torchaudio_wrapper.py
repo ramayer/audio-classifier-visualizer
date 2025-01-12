@@ -7,7 +7,6 @@ from torchaudio.models import wav2vec2_model
 
 
 class AvesTorchaudioWrapper(torch.nn.Module):
-
     def __init__(
         self,
         config="aves-base-bio.torchaudio.model_config.json",

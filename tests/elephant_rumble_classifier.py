@@ -47,7 +47,7 @@ class ElephantRumbleClassifier(nn.Module):
             print(f"using {model_name}")
         self.model_name = model_name
         self.download_model_files_if_needed(model_name)
-        cache_dir  = self.get_cache_prefix()
+        cache_dir = self.get_cache_prefix()
         model_weights_file = os.path.join(cache_dir, model_name)
         self.load_state_dict(torch.load(model_weights_file))
         self.eval()
@@ -61,6 +61,3 @@ class ElephantRumbleClassifier(nn.Module):
             print(f"fetching {dst} from {src}")
             os.makedirs(dst_prefix, exist_ok=True)
             torch.hub.download_url_to_file(src, dst)
-
-
-
