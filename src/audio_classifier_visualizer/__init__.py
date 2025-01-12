@@ -6,11 +6,11 @@
 #from .elephant_rumble_classifier import ElephantRumbleClassifier
 from .audio_file_processor import AudioFileProcessor
 from .audio_file_visualizer import AudioFileVisualizer
-from .raven_file_helper import RavenFileHelper
-from .raven_file_helper import RavenLabel
+from .raven_file_helper import RavenFileHelper, RavenLabel
+
 __all__ = [
-    #"AvesTorchaudioWrapper", 
-    #"ElephantRumbleClassifier", 
+    #"AvesTorchaudioWrapper",
+    #"ElephantRumbleClassifier",
     "AudioFileProcessor",
     "AudioFileVisualizer",
     "RavenFileHelper",

@@ -2,7 +2,9 @@
 import einops
 import torch
 import torchaudio.io as tai
+
 from .triple_buffered_iterator import TripleBufferedIterator
+
 
 class AudioFileProcessor:
     def __init__(self, aves_model = None, elephant_model = None, rumble_sr=500, device="cuda"):
@@ -57,7 +59,7 @@ class AudioFileProcessor:
             if chunk is not None:
                 chunk = self.make_single_channel(chunk)
 
-                # Note - if an hour at a 512Hz framerate has 1800000, samples 
+                # Note - if an hour at a 512Hz framerate has 1800000, samples
                 # we expect 5625 AVES/Hubert embeddings, each representing 0.625 seconds.
 
                 with torch.inference_mode():  # torch.no_grad():

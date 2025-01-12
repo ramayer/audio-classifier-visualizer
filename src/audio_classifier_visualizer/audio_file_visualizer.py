@@ -1,11 +1,14 @@
 
 import dataclasses
+
 import librosa
 import matplotlib.pyplot as plt
-import matplotlib.patches as patches
 import numpy as np
 import torch.nn.functional
+from matplotlib import patches
+
 from . import audio_file_processor as afp
+
 
 class AudioFileVisualizer:
     def __init__(self):
@@ -17,7 +20,7 @@ class AudioFileVisualizer:
         z = input_tensor[None,None,:]
         z2 = torch.nn.functional.interpolate(z,target_length)[0][0]
         return z2
-    
+
     def add_annotation_boxes(self,labels,patch_start,patch_end,axarr,offset=0.2,only=None,color=(0.0, 1.0, 1.0)):
         for row in labels:
             bt,et,lf,hf,dur,fn,tags,notes,tag1,tag2,score,raven_file = dataclasses.astuple(row)
@@ -109,7 +112,7 @@ class AudioFileVisualizer:
             sim = nearness-farness
             sim /= sim.abs().max()
             sim = sim.numpy()
-            
+
             redness = -sim * 8 + 1
             redness[redness>1] = 1
             redness[redness<0] = 0
@@ -120,13 +123,13 @@ class AudioFileVisualizer:
         else:
             redness = stretched_dissimilarity.numpy()
             greenness = stretched_similarity.numpy()
-            if (redness.max()>1 or redness.min() < 0 or 
+            if (redness.max()>1 or redness.min() < 0 or
                 greenness.max()>1 or greenness.min() < 0):
                 redness -= redness.min()
                 redness /= redness.max()
                 greenness -= greenness.min()
                 greenness /= greenness.max()
-            
+
         blueness = 1-(redness + greenness)
         blueness[blueness<0] = 0
         #blueness = blueness - np.min(blueness)

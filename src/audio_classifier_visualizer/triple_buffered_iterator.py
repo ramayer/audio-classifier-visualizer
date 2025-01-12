@@ -1,5 +1,6 @@
 from collections import deque
 
+
 class TripleBufferedIterator:
     def __init__(self, iterable_or_iterator):
         self.iter = iter(iterable_or_iterator)

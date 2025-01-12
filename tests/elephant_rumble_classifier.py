@@ -1,6 +1,8 @@
-import torch.nn as nn
-import torch
 import os
+
+import torch
+from torch import nn
+
 
 class ElephantRumbleClassifier(nn.Module):
     def __init__(

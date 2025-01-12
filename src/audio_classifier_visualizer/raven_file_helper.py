@@ -1,11 +1,13 @@
 import csv
-import duckdb
 import glob
 import os
 import re
-import torch
 from dataclasses import dataclass
 from typing import Optional
+
+import duckdb
+import torch
+
 
 # shorter names for important columns from the raven file
 @dataclass
@@ -51,7 +53,7 @@ class RavenFileHelper:
 
     def find_long_enough_segments(self, segments, n=3):
         return [(a, b) for a, b in segments if b - a >= n]
-    
+
 
     def save_segments_to_raven_file(self,raven_labels,filename,audio_file_name,audio_file_processor):
         self.write_raven_file(raven_labels,filename)
@@ -65,7 +67,7 @@ class RavenFileHelper:
           if 'Selection' in tbl.columns:
             raven_files.append(txtfile)
         return raven_files
-    
+
     def load_one_raven_file(self, raven_file):
         """ usage
             rfh.load_one_raven_file('/tmp/rf.raven')
@@ -125,7 +127,7 @@ class RavenFileHelper:
         self.ddb.sql(union_sql)
 
         self.ddb.sql(
-            f"""
+            """
             CREATE OR REPLACE TEMP TABLE all_raven_labels AS
               SELECT
                  "File Offset (s)"::double as start_time,
@@ -241,7 +243,7 @@ class RavenFileHelper:
         """)
         results = [RavenLabel(*row) for row in rs.fetchall()]
         return results
-    
+
     ################################################################################
     # Training tools (not needed for inferrence)
     ################################################################################
@@ -250,17 +252,17 @@ class RavenFileHelper:
         ifs = self.get_interesting_files()
         files_with_high_quality_labels = [f for f in ifs if "Test" in self.audio_filename_to_path[f]]
         return files_with_high_quality_labels
-    
+
     def get_files_from_train_folder(self):
         ifs = self.get_interesting_files()
         files_with_high_quality_labels = [f for f in ifs if "Train" in self.audio_filename_to_path[f]]
         return files_with_high_quality_labels
-    
+
     def find_candidate_audio_files(self,root_path):
         pattern = root_path + '/**/*.wav'
         wavfiles = glob.glob(pattern,recursive=True)
         return wavfiles
-    
+
     def identify_useful_files(self):
         audio_files = self.find_candidate_audio_files(self.root_path)
         self.files_from_raven = self.ddb.sql('select distinct "Begin File" from all_raven_files').fetchall()
@@ -268,7 +270,7 @@ class RavenFileHelper:
         self.audio_filename_to_path = {re.sub('.*/','',f):f for f in audio_files}
         audio_files_without_path = set([re.sub('.*/','',f) for f in audio_files])
         return files_from_raven_with_fixed_names & audio_files_without_path
-    
+
     def get_interesting_files(self):
         return self.identify_useful_files()
 
@@ -309,7 +311,7 @@ class RavenFileHelper:
           self.precompute_downsampled_pytorch_tensor(audio_filename, new_sr)
         y = torch.load(cached_path,mmap=True)
         return y[int(start*new_sr):int((start + duration)*new_sr+1)].clone().detach()
-    
+
     ## End of Helper functions to quickly get 1khz samples from files
 
 
@@ -323,13 +325,13 @@ class RavenFileHelper:
         pl = sorted(positive_labels,key=lambda x:x.bt)
         if len(pl) == 0:
             return []
-        
+
 
         negative_labels = []
 
-        
+
         negative_label = RavenLabel(
-                    0, 
+                    0,
                     min(pl[0].bt-5,60),
                     25,
                     100,
@@ -350,7 +352,7 @@ class RavenFileHelper:
                 continue
             if (l2.bt - l1.et < 130):
                 negative_label = RavenLabel(
-                    l1.et + 5, 
+                    l1.et + 5,
                     l2.bt - 5,
                     (l1.lf + l2.lf)/2,
                     (l1.hf + l2.hf)/2,
