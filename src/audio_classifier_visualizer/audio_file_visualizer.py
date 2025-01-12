@@ -8,7 +8,7 @@ import numpy as np
 import torch.nn.functional
 from matplotlib import patches
 
-from . import audio_file_processor as afp
+from audio_classifier_visualizer import audio_file_processor as afp
 
 
 class AudioFileVisualizer:
@@ -19,8 +19,7 @@ class AudioFileVisualizer:
         # kinda crazy, but:
         # https://stackoverflow.com/questions/73928655/resizing-a-vector-by-interpolation
         z = input_tensor[None,None,:]
-        z2 = torch.nn.functional.interpolate(z,target_length)[0][0]
-        return z2
+        return torch.nn.functional.interpolate(z,target_length)[0][0]
 
     def add_annotation_boxes(self,labels,patch_start,patch_end,axarr,offset=0.2,only=None,color=(0.0, 1.0, 1.0)):
         for row in labels:
@@ -49,10 +48,14 @@ class AudioFileVisualizer:
                           height=1280/100,
                           width=1920/100,
                           colormap='raw',
-                          labels=[],
-                          negative_labels=[]
+                          labels=None,
+                          negative_labels=None
                           ):
         import time
+        if negative_labels is None:
+            negative_labels = []
+        if labels is None:
+            labels = []
         t0 = time.time()
         start_index = audio_file_processor.time_to_score_index(start_time)
         end_index = audio_file_processor.time_to_score_index(end_time)
@@ -64,15 +67,15 @@ class AudioFileVisualizer:
         duration = end_time-start_time
         audio,sr = librosa.load(audio_file,sr=2000,offset=start_time,duration=end_time-start_time)
         actual_duration = audio.shape[0] / sr
-        #self.logger.debug(f"  loaded audio in {time.time()-t0}")
-        #self.logger.debug(f"  duration","intended=",duration,"actual=",actual_duration)
+        self.logger.debug(f"  loaded audio in {time.time()-t0}")
+        self.logger.debug(f"  duration","intended=",duration,"actual=",actual_duration)
 
         spec  = librosa.stft(audio,n_fft=n_fft,win_length=n_fft,hop_length=hop_length)
         freqs = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
         s_db  = librosa.amplitude_to_db(np.abs(spec), ref=np.max)
         np_spectral_power = np.abs(spec)**2 # type: ignore
 
-        #self.logger.debug(f"  did stft in {time.time()-t0}")
+        self.logger.debug(f"  did stft in {time.time()-t0}")
 
         #np_spectral_power = spec.numpy(force=True) # if you used the torchaudio stft
         if try_per_channel_normalization_on_power := True:
@@ -81,11 +84,11 @@ class AudioFileVisualizer:
             normalized_pwr = np_spectral_power / median_pwr_per_spectral_band[:, None]
             np_spectral_power = normalized_pwr
         else:
-            power_in_region_of_interest = np_spectral_power
+            pass
 
         if clip_outliers := True:
             #db = db - np.max(db)
-            #self.logger.debug("db shape",np_spectral_power.shape)
+            self.logger.debug("db shape",np_spectral_power.shape)
             noise_floor =  np.percentile(np_spectral_power,0.1)
             clip_level = np.percentile(np_spectral_power, 99.9)
             db_normalized = np_spectral_power
@@ -100,7 +103,7 @@ class AudioFileVisualizer:
         mn = np.min(s_db)
         normed = (s_db - mn) / (mx-mn)
         s_db_rgb = np.stack((normed,normed,normed), axis=-1)
-        #self.logger.debug(f"  coloring at {time.time()-t0}")
+        self.logger.debug(f"  coloring at {time.time()-t0}")
 
         stretched_similarity = self.interpolate_1D_tensor(similarity,spec.shape[1])
         stretched_dissimilarity = self.interpolate_1D_tensor(dissimilarity,spec.shape[1])
@@ -141,11 +144,11 @@ class AudioFileVisualizer:
 
         ##  A one-dimensional colormap not good if the classifier has both a similarity and dissimiliary score
         # rgb_array = self.values_to_rgb(stretched_similarity-stretched_dissimilarity)
-        # self.logger.debug("rgb_array.shape",rgb_array.shape)
+        self.logger.debug("rgb_array.shape",rgb_array.shape)
         # s_db_rgb[:,:,0] = s_db_rgb[:,:,0] * rgb_array[:,0].T
         # s_db_rgb[:,:,1] = s_db_rgb[:,:,1] * rgb_array[:,1].T
         # s_db_rgb[:,:,2] = s_db_rgb[:,:,2] * 0
-        #self.logger.debug(f"  plotting at {time.time()-t0}")
+        self.logger.debug(f"  plotting at {time.time()-t0}")
 
         plt.ioff()
 
@@ -159,7 +162,7 @@ class AudioFileVisualizer:
         librosa.display.specshow(s_db_rgb[:,:], sr=sr, n_fft=n_fft, hop_length=hop_length, x_axis='time', y_axis='log', y_coords=freqs, ax=ax1)
         plt.gca().set_xticks(np.arange(0, duration, 30))
         #add_annotation_boxes(labels,start_time,duration,plt.gca(),offset=.5)
-        #self.logger.debug(f"  specshow done at {time.time()-t0}")
+        self.logger.debug(f"  specshow done at {time.time()-t0}")
 
         # local_rfw.add_annotation_boxes(labels,start_time,duration,ax1,offset=.5,color=(0,1,0))
         # negative_lables = local_rfw.get_negative_labels(labels)
@@ -167,7 +170,7 @@ class AudioFileVisualizer:
         self.add_annotation_boxes(labels,start_time,end_time,ax1,offset=0.5,color=(0,1,1))
         self.add_annotation_boxes(negative_labels,start_time,end_time,ax1,offset=0.5,color=(0,0,1))
 
-        #self.logger.debug("make sure similarity shape is compatible",s_db_rgb.shape, stretched_similarity.shape)
+        self.logger.debug("make sure similarity shape is compatible",s_db_rgb.shape, stretched_similarity.shape)
         fairseq_time = [i*actual_duration/similarity.shape[0] for i in range(similarity.shape[0])]
         ax2.plot(fairseq_time,similarity_scoresz[start_index:end_index], color='tab:green')
         ax2.plot(fairseq_time,dissimilarity_scoresz[start_index:end_index], color='tab:red')
@@ -175,12 +178,12 @@ class AudioFileVisualizer:
         ax2.set_xlim(0, duration)
 
         # add a title with some room
-        hour,minute,second = int(start_time//60//60),int(start_time//60)%60,start_time%60
+        hour,minute,_second = int(start_time//60//60),int(start_time//60)%60,start_time%60
         displaytime = f"{hour:02}:{minute:02}"
 
         plt.subplots_adjust(top=0.93,left=0)
         fig.suptitle(f"{title}", fontsize=16,  ha='left', x=0)
-        #self.logger.debug(f"  saving at {time.time()-t0}")
+        self.logger.debug(f"  saving {displaytime} at {time.time()-t0}")
 
         if matplotlib_fixed_issue_26150:=True:
             #fig.tight_layout()

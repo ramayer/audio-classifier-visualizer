@@ -12,7 +12,7 @@ class ElephantRumbleClassifier(nn.Module):
         output_dim=2,
         dropout=0.2,
     ):
-        super(ElephantRumbleClassifier, self).__init__()
+        super().__init__()
         self.model_name = "[no weights loaded]"
         self.act = nn.LeakyReLU()
         self.linear1 = nn.Linear(input_dim, hidden_dim)
@@ -24,13 +24,11 @@ class ElephantRumbleClassifier(nn.Module):
         x = self.linear1(x)
         x = self.act(x)
         x = self.dropout(x)
-        x = self.linear2(x)
-        return x
+        return self.linear2(x)
 
     def get_cache_prefix(self):
         cache_prefix = torch.hub.get_dir()
-        cache_dir = os.path.join(cache_prefix, "fruitpunch_elephants")
-        return cache_dir
+        return os.path.join(cache_prefix, "fruitpunch_elephants")
 
     def choose_model_weights(self, model_name):
         if model_name in ["best", "training", "best_using_training_data_only"]:

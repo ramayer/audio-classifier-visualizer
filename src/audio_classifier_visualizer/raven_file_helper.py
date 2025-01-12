@@ -77,9 +77,9 @@ class RavenFileHelper:
 
         self.ddb.sql("""
                     create or replace temp view empty_table_all_columns as
-                     select * from all_raven_files limit 0 
+                     select * from all_raven_files limit 0
                      """)
-        rf = self.ddb.sql(
+        self.ddb.sql(
             f"""
             CREATE OR REPLACE VIEW one_raven_file AS
             SELECT * FROM read_csv('{raven_file}', auto_type_candidates = ['BIGINT', 'DOUBLE','VARCHAR'])
@@ -106,8 +106,7 @@ class RavenFileHelper:
                WHERE end_time is not null
             """
         )
-        results = [RavenLabel(*row) for row in useful_cols.fetchall()]
-        return results
+        return [RavenLabel(*row) for row in useful_cols.fetchall()]
 
 
     def all_raven_files_as_one_table(self, raven_files):
@@ -234,7 +233,7 @@ class RavenFileHelper:
                     print(row)
                     if idx>3:
                         break
-        
+
         """
         wav_file_without_path = os.path.basename(wav_file)
         wav_file_pattern = re.sub(r'dz(an)?', 'dz%', wav_file_without_path)
@@ -243,8 +242,7 @@ class RavenFileHelper:
             WHERE audio_file ilike '%{wav_file_pattern}%'
             ORDER BY start_time
         """)
-        results = [RavenLabel(*row) for row in rs.fetchall()]
-        return results
+        return [RavenLabel(*row) for row in rs.fetchall()]
 
     ################################################################################
     # Training tools (not needed for inferrence)
@@ -252,25 +250,22 @@ class RavenFileHelper:
 
     def get_files_from_test_folder(self):
         ifs = self.get_interesting_files()
-        files_with_high_quality_labels = [f for f in ifs if "Test" in self.audio_filename_to_path[f]]
-        return files_with_high_quality_labels
+        return [f for f in ifs if "Test" in self.audio_filename_to_path[f]]
 
     def get_files_from_train_folder(self):
         ifs = self.get_interesting_files()
-        files_with_high_quality_labels = [f for f in ifs if "Train" in self.audio_filename_to_path[f]]
-        return files_with_high_quality_labels
+        return [f for f in ifs if "Train" in self.audio_filename_to_path[f]]
 
     def find_candidate_audio_files(self,root_path):
         pattern = root_path + '/**/*.wav'
-        wavfiles = glob.glob(pattern,recursive=True)
-        return wavfiles
+        return glob.glob(pattern,recursive=True)
 
     def identify_useful_files(self):
         audio_files = self.find_candidate_audio_files(self.root_path)
         self.files_from_raven = self.ddb.sql('select distinct "Begin File" from all_raven_files').fetchall()
-        files_from_raven_with_fixed_names = set([re.sub('dzan','dz',row[0]) for row in self.files_from_raven])
+        files_from_raven_with_fixed_names = {re.sub('dzan','dz',row[0]) for row in self.files_from_raven}
         self.audio_filename_to_path = {re.sub('.*/','',f):f for f in audio_files}
-        audio_files_without_path = set([re.sub('.*/','',f) for f in audio_files])
+        audio_files_without_path = {re.sub('.*/','',f) for f in audio_files}
         return files_from_raven_with_fixed_names & audio_files_without_path
 
     def get_interesting_files(self):
@@ -281,9 +276,10 @@ class RavenFileHelper:
     def load_entire_wav_file(self, wav_file_path, new_sr = None):
         import torchaudio.io as tai
         if not new_sr:
-            raise Exception("load_entire_wav_file now requires a sr")
+            msg = "load_entire_wav_file now requires a sr"
+            raise Exception(msg)
         streamer = tai.StreamReader(wav_file_path)
-        sr = int(streamer.get_src_stream_info(0).sample_rate)
+        int(streamer.get_src_stream_info(0).sample_rate)
         streamer.add_basic_audio_stream(
             stream_index = 0,
             sample_rate = new_sr,

@@ -5,7 +5,7 @@ import einops
 import torch
 import torchaudio.io as tai
 
-from .triple_buffered_iterator import TripleBufferedIterator
+from audio_classifier_visualizer.triple_buffered_iterator import TripleBufferedIterator
 
 
 class AudioFileProcessor:
@@ -68,7 +68,7 @@ class AudioFileProcessor:
                 with torch.inference_mode():  # torch.no_grad():
                     if chunk.shape[0] % 320 != 0:
                         self.logger.warning("""
-                              Warning - AVES/Hubert uses 320 sample convolutional layers; 
+                              Warning - AVES/Hubert uses 320 sample convolutional layers;
                               the last embedding vector may be based on incomplete information.
                               """)
                     preroll = torch.empty(0,1)
