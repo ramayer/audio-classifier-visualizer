@@ -1,5 +1,6 @@
 from collections import deque
 
+
 class TripleBufferedIterator:
     def __init__(self, iterable_or_iterator):
         self.iter = iter(iterable_or_iterator)
@@ -13,14 +14,14 @@ class TripleBufferedIterator:
         return self
 
     def __next__(self):
-        while len(self.buffer) < 3:
+        while len(self.buffer) < 3:  # noqa: PLR2004
             try:
                 self.buffer.append(next(self.iter))
             except StopIteration:
                 break
-        if len(self.buffer) <2:
+        if len(self.buffer) < 2:  # noqa: PLR2004
             raise StopIteration
         prv = self.buffer.popleft()
         cur = self.buffer[0]
-        nxt = self.buffer[1] if len(self.buffer)>1 else None
-        return prv,cur,nxt
+        nxt = self.buffer[1] if len(self.buffer) > 1 else None
+        return prv, cur, nxt

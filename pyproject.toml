@@ -81,3 +81,8 @@ dependencies = [
 [tool.hatch.envs.test.scripts]
 test = "pytest {args:tests}"
 test-cov = "pytest --cov {args:tests}"
+
+
+[tool.ruff.lint.extend-per-file-ignores]
+"src/audio_classifier_visualizer/main.py"= ["T201"]
+"tests/*" = ["T201"]

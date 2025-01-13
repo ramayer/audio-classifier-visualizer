@@ -1,6 +1,8 @@
-import torch.nn as nn
-import torch
 import os
+
+import torch
+from torch import nn
+
 
 class ElephantRumbleClassifier(nn.Module):
     def __init__(
@@ -10,7 +12,7 @@ class ElephantRumbleClassifier(nn.Module):
         output_dim=2,
         dropout=0.2,
     ):
-        super(ElephantRumbleClassifier, self).__init__()
+        super().__init__()
         self.model_name = "[no weights loaded]"
         self.act = nn.LeakyReLU()
         self.linear1 = nn.Linear(input_dim, hidden_dim)
@@ -22,13 +24,11 @@ class ElephantRumbleClassifier(nn.Module):
         x = self.linear1(x)
         x = self.act(x)
         x = self.dropout(x)
-        x = self.linear2(x)
-        return x
+        return self.linear2(x)
 
     def get_cache_prefix(self):
         cache_prefix = torch.hub.get_dir()
-        cache_dir = os.path.join(cache_prefix, "fruitpunch_elephants")
-        return cache_dir
+        return os.path.join(cache_prefix, "fruitpunch_elephants")
 
     def choose_model_weights(self, model_name):
         if model_name in ["best", "training", "best_using_training_data_only"]:
@@ -47,7 +47,7 @@ class ElephantRumbleClassifier(nn.Module):
             print(f"using {model_name}")
         self.model_name = model_name
         self.download_model_files_if_needed(model_name)
-        cache_dir  = self.get_cache_prefix()
+        cache_dir = self.get_cache_prefix()
         model_weights_file = os.path.join(cache_dir, model_name)
         self.load_state_dict(torch.load(model_weights_file))
         self.eval()
@@ -61,6 +61,3 @@ class ElephantRumbleClassifier(nn.Module):
             print(f"fetching {dst} from {src}")
             os.makedirs(dst_prefix, exist_ok=True)
             torch.hub.download_url_to_file(src, dst)
-
-
-

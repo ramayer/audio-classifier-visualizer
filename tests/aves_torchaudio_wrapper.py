@@ -1,12 +1,12 @@
 import json
 import os
+
 import torch
 import torch.hub
 from torchaudio.models import wav2vec2_model
 
 
 class AvesTorchaudioWrapper(torch.nn.Module):
-
     def __init__(
         self,
         config="aves-base-bio.torchaudio.model_config.json",
@@ -24,7 +24,7 @@ class AvesTorchaudioWrapper(torch.nn.Module):
         self.eval()
 
     def load_config(self, config_path):
-        with open(config_path, "r") as ff:
+        with open(config_path) as ff:
             return json.load(ff)
 
     def forward(self, sig):
@@ -32,8 +32,7 @@ class AvesTorchaudioWrapper(torch.nn.Module):
 
     def get_cache_prefix(self):
         cache_prefix = torch.hub.get_dir()
-        cache_dir = os.path.join(cache_prefix, "fruitpunch_elephants")
-        return cache_dir
+        return os.path.join(cache_prefix, "fruitpunch_elephants")
 
     def download_model_files_if_needed(self, required_files):
         src_prefix = "https://storage.googleapis.com/esp-public-files/ported_aves"
