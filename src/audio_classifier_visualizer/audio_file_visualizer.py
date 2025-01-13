@@ -1,26 +1,39 @@
+from __future__ import annotations
+
 import dataclasses
 import logging
+from typing import TYPE_CHECKING, Any
 
 import librosa
 import matplotlib.pyplot as plt
 import numpy as np
-import torch.nn.functional
+import torch
 from matplotlib import patches
 
-from audio_classifier_visualizer import audio_file_processor as afp
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+
+    from audio_classifier_visualizer import audio_file_processor as afp
 
 
 class AudioFileVisualizer:
-    def __init__(self):
+    def __init__(self) -> None:
         self.logger = logging.getLogger(__name__)
 
-    def interpolate_1d_tensor(self, input_tensor, target_length):
-        # kinda crazy, but:
-        # https://stackoverflow.com/questions/73928655/resizing-a-vector-by-interpolation
+    def interpolate_1d_tensor(self, input_tensor: torch.Tensor, target_length: int) -> torch.Tensor:
         z = input_tensor[None, None, :]
         return torch.nn.functional.interpolate(z, target_length)[0][0]
 
-    def add_annotation_boxes(self, labels, patch_start, patch_end, axarr, offset=0.2, only=None, color=(0.0, 1.0, 1.0)):
+    def add_annotation_boxes(
+        self,
+        labels: list[Any],
+        patch_start: float,
+        patch_end: float,
+        axarr: Axes,
+        offset: float = 0.2,
+        only: float | None = None,
+        color: tuple[float, float, float] = (0.0, 1.0, 1.0),
+    ) -> None:
         for row in labels:
             bt, et, lf, hf, dur, fn, tags, notes, tag1, tag2, score, raven_file = dataclasses.astuple(row)
             if et < patch_start:

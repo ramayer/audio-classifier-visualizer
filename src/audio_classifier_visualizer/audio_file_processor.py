@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 
 import einops
@@ -8,30 +10,36 @@ from audio_classifier_visualizer.triple_buffered_iterator import TripleBufferedI
 
 
 class AudioFileProcessor:
-    def __init__(self, aves_model=None, elephant_model=None, rumble_sr=500, device="cuda"):
+    def __init__(
+        self,
+        aves_model: torch.nn.Module | None = None,
+        elephant_model: torch.nn.Module | None = None,
+        rumble_sr: int = 500,
+        device: str = "cuda",
+    ) -> None:
         self.aves_model = aves_model
         self.elephant_model = elephant_model
         self.rumble_sr = rumble_sr
         self.device = device
-        self.audio_samples_per_embedding = 320  # from https://arxiv.org/pdf/2106.07447
+        self.audio_samples_per_embedding: int = 320  # from https://arxiv.org/pdf/2106.07447
         self.logger = logging.getLogger(__name__)
 
-    def time_to_score_index(self, t):
+    def time_to_score_index(self, t: float) -> int:
         return t * self.rumble_sr // self.audio_samples_per_embedding
 
-    def score_index_to_time(self, s):
+    def score_index_to_time(self, s: int) -> float:
         return s * self.audio_samples_per_embedding / self.rumble_sr
 
-    def normalize_aves_embeddings(self, embs):
+    def normalize_aves_embeddings(self, embs: torch.Tensor) -> torch.Tensor:
         with torch.inference_mode():  # torch.no_grad():
             norms = embs.norm(p=2, dim=1, keepdim=True)
             unit_vecs = embs / norms
             return unit_vecs.to("cpu").detach()
 
-    def make_single_channel(self, chunk):
+    def make_single_channel(self, chunk: torch.Tensor) -> torch.Tensor:
         return chunk[:, 0:1]  # remove stereo or surround channels
 
-    def get_aves_embeddings(self, chunk):
+    def get_aves_embeddings(self, chunk: torch.Tensor) -> torch.Tensor:
         with torch.inference_mode():
             self.logger.debug("in get_aves_embeddngs %s", chunk.shape)
             if chunk.shape[0] < 320 * 2:

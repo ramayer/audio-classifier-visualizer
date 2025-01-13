@@ -1,19 +1,24 @@
+from __future__ import annotations
+
 from collections import deque
+from typing import Iterable, Iterator, Optional, Tuple, TypeVar
+
+T = TypeVar("T")
 
 
-class TripleBufferedIterator:
-    def __init__(self, iterable_or_iterator):
-        self.iter = iter(iterable_or_iterator)
-        self.buffer = deque(maxlen=3)
+class TripleBufferedIterator(Iterator[Tuple[Optional[T], T, Optional[T]]]):
+    def __init__(self, iterable_or_iterator: Iterable[T]) -> None:
+        self.iter: Iterator[T] = iter(iterable_or_iterator)
+        self.buffer: deque[T | None] = deque(maxlen=3)
         self.__iter__()
 
-    def __iter__(self):
+    def __iter__(self) -> TripleBufferedIterator[T]:
         self.iter = self.iter.__iter__()
         self.buffer.clear()
         self.buffer.append(None)
         return self
 
-    def __next__(self):
+    def __next__(self) -> tuple[T | None, T, T | None]:
         while len(self.buffer) < 3:  # noqa: PLR2004
             try:
                 self.buffer.append(next(self.iter))
