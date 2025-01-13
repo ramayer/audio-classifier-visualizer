@@ -31,7 +31,7 @@ dependencies = [
   "matplotlib",
   "torch",
   "torchaudio",
-#  "elephant-rumble-inference @ git+https://github.com/ramayer/elephant-rumble-inference@v0.9.0-rc1",
+  "elephant-rumble-inference @ git+https://github.com/ramayer/elephant-rumble-inference@v0.9.0-rc1",
 ]
 
 [tool.hatch.metadata]
