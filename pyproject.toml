@@ -29,9 +29,11 @@ dependencies = [
   "einops>=0.7.0",
   "librosa",
   "matplotlib",
+  "scikit-learn",
   "torch",
   "torchaudio",
-  "elephant-rumble-inference @ git+https://github.com/ramayer/elephant-rumble-inference@v0.9.0-rc1",
+  "pandas",
+  #"elephant-rumble-inference @ git+https://github.com/ramayer/elephant-rumble-inference@v0.9.0-rc1",
 ]
 
 [tool.hatch.metadata]
@@ -71,10 +73,11 @@ exclude_lines = [
   "if TYPE_CHECKING:",
 ]
 
-[tool.hatch.envs.test]
+[tool.hatch.envs.hatch-test]
 dependencies = [
   "pytest>=7.0.0",
   "pytest-cov>=4.1.0",
+  
   "elephant-rumble-inference @ git+https://github.com/ramayer/elephant-rumble-inference@v0.9.0-rc1",
 ]
 
