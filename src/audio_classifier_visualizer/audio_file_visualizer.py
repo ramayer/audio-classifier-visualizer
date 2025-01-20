@@ -15,10 +15,42 @@ if TYPE_CHECKING:
 
 
 class AudioFileVisualizer:
-    def __init__(self) -> None:
-        """Initialize the AudioFileVisualizer."""
-        print("AAAAAAAAAAAAAAAAAAAAB")
+    def __init__(self, audio_file: str, start_time: float = 0, end_time: float | None = None, sr: int = 2000,feature_rate: int|None = None) -> None:
+        """Initialize the AudioFileVisualizer.
+        
+        Args:
+            audio_file: Path to audio file to visualize
+            start_time: Start time in seconds to load from
+            end_time: End time in seconds to load until (default: entire file)
+        """
         self.logger = logging.getLogger(__name__)
+        
+        # Load audio
+        self.audio, self.sr = librosa.load(audio_file, sr=sr, offset=start_time, duration=None if end_time is None else end_time - start_time)
+        self.duration = self.audio.shape[0] / self.sr
+        
+        # Compute spectral features
+        self.n_fft = 2048
+        self.hop_length = self.n_fft // 4
+
+        if feature_rate is None:
+            # Default for AVES/HuBERT embeddings
+            # from https://arxiv.org/pdf/2106.07447
+            default_feature_rate = 320
+            self.feature_rate = self.sr // default_feature_rate
+        else:
+            self.feature_rate = feature_rate
+        
+        # Compute STFT and spectral power
+        self.spec = librosa.stft(self.audio, n_fft=self.n_fft, win_length=self.n_fft, hop_length=self.hop_length)
+        self.freqs = librosa.fft_frequencies(sr=self.sr, n_fft=self.n_fft)
+        self.spectral_power = np.abs(self.spec) ** 2  # type: ignore
+
+    def time_to_score_index(self, t: float) -> int:
+        return t * self.feature_rate
+
+    def score_index_to_time(self, s: int) -> float:
+        return s / self.feature_rate
 
     def interpolate_1d_tensor(self, input_tensor: torch.Tensor, target_length: int) -> torch.Tensor:
         z = input_tensor[None, None, :]
@@ -71,12 +103,7 @@ class AudioFileVisualizer:
                 facecolor="none",
             )
             axarr.add_patch(rect)
-    def _compute_spectral_power(self, audio: np.ndarray, sr: int, n_fft: int, hop_length: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        spec = librosa.stft(audio, n_fft=n_fft, win_length=n_fft, hop_length=hop_length)
-        freqs = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
-        np_spectral_power = np.abs(spec) ** 2  # type: ignore
-        return spec, freqs, np_spectral_power
-
+            
     def _normalize_spectral_power(self, np_spectral_power: np.ndarray, try_per_channel_normalization: bool, clip_outliers: bool) -> np.ndarray:
         if try_per_channel_normalization:
             median_pwr_per_spectral_band = np.median(np_spectral_power, axis=1)
@@ -120,26 +147,31 @@ class AudioFileVisualizer:
         blueness = 1 - (redness + greenness)
         blueness[blueness < 0] = 0
         return redness, greenness, blueness
-
-    def _create_plot(self, s_db_rgb: np.ndarray, sr: int, n_fft: int, hop_length: int, freqs: np.ndarray, 
-                    duration: float, actual_duration: float, similarity: torch.Tensor,
+    
+    def _create_plot(self, s_db_rgb: np.ndarray, duration: float, actual_duration: float, similarity: torch.Tensor,
                     similarity_scoresz: torch.Tensor, dissimilarity_scoresz: torch.Tensor,
                     start_index: int, end_index: int, labels: list, negative_labels: list,
                     start_time: float, end_time: float, width: float, height: float,
                     title: str, save_file: str) -> None:
         plt.ioff()
         fs = (width, height)
-        gs = {"height_ratios": [3, 1]}
-        fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True, figsize=fs, gridspec_kw=gs)  # type: ignore
+        gs = {"height_ratios": [1, 3, 1]}  # Add ratio for waveform plot
+        fig, (ax0, ax1, ax2) = plt.subplots(3, 1, sharex=True, figsize=fs, gridspec_kw=gs)  # type: ignore
+
+        # Plot waveform
+        times = np.linspace(0, duration, len(self.audio))
+        ax0.plot(times, self.audio, linewidth=0.5)
+        ax0.set_ylabel('Amplitude')
+        ax0.set_xlim(0, duration)
 
         librosa.display.specshow(
             s_db_rgb[:, :],
-            sr=sr,
-            n_fft=n_fft,
-            hop_length=hop_length,
+            sr=self.sr,
+            n_fft=self.n_fft,
+            hop_length=self.hop_length,
             x_axis="time",
             y_axis="log",
-            y_coords=freqs,
+            y_coords=self.freqs,
             ax=ax1,
         )
         plt.gca().set_xticks(np.arange(0, duration, 30))
@@ -150,6 +182,7 @@ class AudioFileVisualizer:
         fairseq_time = [i * actual_duration / similarity.shape[0] for i in range(similarity.shape[0])]
         ax2.plot(fairseq_time, similarity_scoresz[start_index:end_index], color="tab:green")
         ax2.plot(fairseq_time, dissimilarity_scoresz[start_index:end_index], color="tab:red")
+        ax0.set_xlim(0, duration)
         ax1.set_xlim(0, duration)
         ax2.set_xlim(0, duration)
 
@@ -165,48 +198,43 @@ class AudioFileVisualizer:
         plt.close("all")
         self.logger.info("  visualizations saved to %s", save_file)
 
+
+
     def visualize_audio_file_fragment(
         self,
-        title,
-        save_file,
-        audio_file,
-        similarity_scoresz,
-        dissimilarity_scoresz,
+        title: str,
+        save_file: str,
+        similarity_scoresz: torch.Tensor,
+        dissimilarity_scoresz: torch.Tensor,
         audio_file_processor,  # : afp.AudioFileProcessor,
-        start_time=0,
-        end_time=60 * 6,
-        height=1280 / 100,
-        width=1920 / 100,
-        colormap="raw",
-        labels=None,
-        negative_labels=None,
+        start_time: float = 0,
+        end_time: float = 60 * 6,
+        height: float = 1280 / 100,
+        width: float = 1920 / 100,
+        colormap: str = "raw",
+        labels: list | None = None,
+        negative_labels: list | None = None,
         try_per_channel_normalization_on_power: bool = True,
         clip_outliers: bool = True,
-    ):
+    ) -> None:
         import time
 
         if negative_labels is None:
             negative_labels = []
         if labels is None:
             labels = []
+            
         t0 = time.time()
-        start_index = audio_file_processor.time_to_score_index(start_time)
-        end_index = audio_file_processor.time_to_score_index(end_time)
+        start_index = self.time_to_score_index(start_time)
+        end_index = self.time_to_score_index(end_time)
         similarity = similarity_scoresz[start_index:end_index].clone()
         dissimilarity = dissimilarity_scoresz[start_index:end_index].clone()
 
-        n_fft = 2048
-        hop_length = n_fft // 4
         duration = end_time - start_time
-        audio, sr = librosa.load(audio_file, sr=2000, offset=start_time, duration=end_time - start_time)
-        actual_duration = audio.shape[0] / sr
-        self.logger.debug("  loaded audio in %s", time.time() - t0)
+        actual_duration = self.audio.shape[0] / self.sr
         self.logger.debug("  duration intended=%s actual=%s", duration, actual_duration)
 
-        spec, freqs, np_spectral_power = self._compute_spectral_power(audio, sr, n_fft, hop_length)
-        self.logger.debug("  did stft in %s", time.time() - t0)
-
-        np_spectral_power = self._normalize_spectral_power(np_spectral_power, try_per_channel_normalization_on_power, clip_outliers)
+        np_spectral_power = self._normalize_spectral_power(self.spectral_power, try_per_channel_normalization_on_power, clip_outliers)
         s_db = librosa.power_to_db(np_spectral_power, ref=np.max)
 
         mx = np.max(s_db)
@@ -215,8 +243,8 @@ class AudioFileVisualizer:
         s_db_rgb = np.stack((normed, normed, normed), axis=-1)
         self.logger.debug("  coloring at %s", time.time() - t0)
 
-        stretched_similarity = self.interpolate_1d_tensor(similarity, spec.shape[1])
-        stretched_dissimilarity = self.interpolate_1d_tensor(dissimilarity, spec.shape[1])
+        stretched_similarity = self.interpolate_1d_tensor(similarity, self.spec.shape[1])
+        stretched_dissimilarity = self.interpolate_1d_tensor(dissimilarity, self.spec.shape[1])
 
         redness, greenness, blueness = self._compute_color_channels(stretched_similarity, stretched_dissimilarity, colormap)
 
@@ -226,18 +254,6 @@ class AudioFileVisualizer:
 
         self.logger.debug("  plotting at %s", time.time() - t0)
 
-        self._create_plot(s_db_rgb, sr, n_fft, hop_length, freqs, duration, actual_duration,
+        self._create_plot(s_db_rgb, duration, actual_duration,
                          similarity, similarity_scoresz, dissimilarity_scoresz, start_index, end_index,
                          labels, negative_labels, start_time, end_time, width, height, title, save_file)
-
-
-# AudioFileVisualizer().visualize_audio_file_fragment(
-#     f"{audio_file} and scores",
-#     '/home/ron/proj/elephantlistening/tmp/aves/test.png',
-#     audio_file,
-#     scores[:,1],
-#     scores[:,0],
-#     afp,
-#     start_time=0,
-#     end_time=60*60
-# )
