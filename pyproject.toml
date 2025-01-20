@@ -26,6 +26,7 @@ classifiers = [
 ]
 dependencies = [
   "duckdb",
+  "einx",
   "einops>=0.7.0",
   "librosa",
   "matplotlib",

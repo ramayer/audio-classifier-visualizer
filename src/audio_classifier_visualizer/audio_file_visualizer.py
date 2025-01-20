@@ -15,7 +15,10 @@ if TYPE_CHECKING:
 
 
 class AudioFileVisualizer:
-    def __init__(self, audio_file: str, start_time: float = 0, end_time: float | None = None, sr: int = 2000,feature_rate: int|None = None) -> None:
+    def __init__(self, audio_file: str, 
+                 start_time: float = 0, end_time: float | None = None, 
+                 n_fft: int = 2048,
+                 sr: int = 2000, feature_rate: int|None = None) -> None:
         """Initialize the AudioFileVisualizer.
         
         Args:
@@ -30,7 +33,7 @@ class AudioFileVisualizer:
         self.duration = self.audio.shape[0] / self.sr
         
         # Compute spectral features
-        self.n_fft = 2048
+        self.n_fft = n_fft
         self.hop_length = self.n_fft // 4
 
         if feature_rate is None:
@@ -43,8 +46,22 @@ class AudioFileVisualizer:
         
         # Compute STFT and spectral power
         self.spec = librosa.stft(self.audio, n_fft=self.n_fft, win_length=self.n_fft, hop_length=self.hop_length)
+        #self.spec = librosa.stft(self.audio)
         self.freqs = librosa.fft_frequencies(sr=self.sr, n_fft=self.n_fft)
         self.spectral_power = np.abs(self.spec) ** 2  # type: ignore
+
+        # Initialize plot components
+        self.plot_components = []
+        self.fig = None
+        self.axes = []
+        self.title = ""
+        self.save_file = ""
+        self.duration = 0
+        self.actual_duration = 0
+        self.start_time = 0
+        self.end_time = 0
+        self.width = 0
+        self.height = 0
 
     def time_to_score_index(self, t: float) -> int:
         return t * self.feature_rate
@@ -63,7 +80,6 @@ class AudioFileVisualizer:
         patch_end: float,
         axarr: Axes,
         offset: float = 0.2,
-        only: float | None = None,
         color: tuple[float, float, float] = (0.0, 1.0, 1.0),
     ) -> None:
         """Add annotation boxes to the visualization.
@@ -74,7 +90,6 @@ class AudioFileVisualizer:
             patch_end: End time of the patch
             axarr: Matplotlib axes to draw on
             offset: Offset for box drawing (default: 0.2)
-            only: If set, only draw box for this time point
             color: RGB color tuple for the boxes
         """
         for row in labels:
@@ -83,27 +98,20 @@ class AudioFileVisualizer:
                 continue
             if bt > patch_end:
                 continue
-            if only is not None and only != bt:
-                continue
-            rect = patches.Rectangle(
-                (bt - patch_start - offset, lf - 5),
-                (et - bt + offset * 2),
-                (hf - lf + 10),
-                linewidth=3,
-                edgecolor=(0, 0, 0),
-                facecolor="none",
-            )
-            axarr.add_patch(rect)
-            rect = patches.Rectangle(
-                (bt - patch_start - offset, lf - 5),
-                (et - bt + offset * 2),
-                (hf - lf + 10),
-                linewidth=1,
-                edgecolor=color,
-                facecolor="none",
-            )
-            axarr.add_patch(rect)
+            xy = (bt - patch_start - offset, lf - 5)
+            width = et - bt + offset * 2
+            height = hf - lf + 10
             
+            for linewidth, edgecolor in [(3, (0, 0, 0)), (1, color)]:
+                rect = patches.Rectangle(
+                    xy,
+                    width,
+                    height,
+                    linewidth=linewidth,
+                    edgecolor=edgecolor,
+                    facecolor="none",
+                )
+                axarr.add_patch(rect)
     def _normalize_spectral_power(self, np_spectral_power: np.ndarray, try_per_channel_normalization: bool, clip_outliers: bool) -> np.ndarray:
         if try_per_channel_normalization:
             median_pwr_per_spectral_band = np.median(np_spectral_power, axis=1)
@@ -147,56 +155,178 @@ class AudioFileVisualizer:
         blueness = 1 - (redness + greenness)
         blueness[blueness < 0] = 0
         return redness, greenness, blueness
-    
-    def _create_plot(self, s_db_rgb: np.ndarray, duration: float, actual_duration: float, similarity: torch.Tensor,
-                    similarity_scoresz: torch.Tensor, dissimilarity_scoresz: torch.Tensor,
-                    start_index: int, end_index: int, labels: list, negative_labels: list,
-                    start_time: float, end_time: float, width: float, height: float,
-                    title: str, save_file: str) -> None:
-        plt.ioff()
-        fs = (width, height)
-        gs = {"height_ratios": [1, 3, 1]}  # Add ratio for waveform plot
-        fig, (ax0, ax1, ax2) = plt.subplots(3, 1, sharex=True, figsize=fs, gridspec_kw=gs)  # type: ignore
 
-        # Plot waveform
-        times = np.linspace(0, duration, len(self.audio))
-        ax0.plot(times, self.audio, linewidth=0.5)
-        ax0.set_ylabel('Amplitude')
-        ax0.set_xlim(0, duration)
+    def setup_plot(self, title: str, save_file: str, start_time: float, end_time: float, width: float, height: float) -> None:
+        self.title = title
+        self.save_file = save_file
+        self.start_time = start_time
+        self.end_time = end_time
+        self.width = width
+        self.height = height
+        self.duration = end_time - start_time
+        self.actual_duration = self.audio.shape[0] / self.sr
 
-        librosa.display.specshow(
-            s_db_rgb[:, :],
-            sr=self.sr,
-            n_fft=self.n_fft,
-            hop_length=self.hop_length,
-            x_axis="time",
-            y_axis="log",
-            y_coords=self.freqs,
-            ax=ax1,
+    def add_waveform(self) -> None:
+        self.plot_components.append("waveform")
+
+    def add_spectrogram(self, labels: list | None = None, negative_labels: list | None = None,
+                       try_per_channel_normalization: bool = True, clip_outliers: bool = True,
+                       similarity_scoresz: torch.Tensor | None = None,
+                       dissimilarity_scoresz: torch.Tensor | None = None,
+                       colormap: str = "raw",
+                       log_scale: bool = False) -> None:
+        self.plot_components.append({
+            "type": "spectrogram",
+            "labels": labels or [],
+            "negative_labels": negative_labels or [],
+            "normalize": try_per_channel_normalization,
+            "clip_outliers": clip_outliers,
+            "similarity": similarity_scoresz,
+            "dissimilarity": dissimilarity_scoresz,
+            "colormap": colormap,
+            "log_scale": log_scale
+        })
+
+    def add_similarities(self, similarity_scoresz: torch.Tensor, dissimilarity_scoresz: torch.Tensor) -> None:
+        self.plot_components.append({
+            "type": "similarities",
+            "similarity": similarity_scoresz,
+            "dissimilarity": dissimilarity_scoresz
+        })
+
+    def _plot_waveform(self, ax: Axes) -> None:
+        times = np.linspace(0, self.actual_duration, len(self.audio))
+        ax.plot(times, self.audio, linewidth=0.5)
+        ax.set_ylabel('Amplitude')
+        ax.set_xlim(0, self.duration)
+        ax.set_xticks(np.arange(0, self.duration + 1, 30))
+
+    def _plot_spectrogram(self, ax: Axes, component: dict) -> None:
+        np_spectral_power = self._normalize_spectral_power(
+            self.spectral_power, 
+            component["normalize"],
+            component["clip_outliers"]
         )
-        plt.gca().set_xticks(np.arange(0, duration, 30))
+        s_db = librosa.power_to_db(np_spectral_power, ref=np.max)
+        
+        if component["similarity"] is not None and component["dissimilarity"] is not None:
+            start_index = self.time_to_score_index(self.start_time)
+            end_index = self.time_to_score_index(self.end_time)
+            similarity = component["similarity"][start_index:end_index].clone()
+            dissimilarity = component["dissimilarity"][start_index:end_index].clone()
+            
+            mx, mn = np.max(s_db), np.min(s_db)
+            normed = (s_db - mn) / (mx - mn)
+            s_db_rgb = np.stack((normed, normed, normed), axis=-1)
+            
+            stretched_similarity = self.interpolate_1d_tensor(similarity, self.spec.shape[1])
+            stretched_dissimilarity = self.interpolate_1d_tensor(dissimilarity, self.spec.shape[1])
+            
+            redness, greenness, blueness = self._compute_color_channels(
+                stretched_similarity, stretched_dissimilarity, component["colormap"]
+            )
+            
+            s_db_rgb[:, :, 0] = s_db_rgb[:, :, 0] * redness
+            s_db_rgb[:, :, 1] = s_db_rgb[:, :, 1] * greenness
+            s_db_rgb[:, :, 2] = s_db_rgb[:, :, 2] * blueness
+            
+            librosa.display.specshow(
+                s_db_rgb[:, :],
+                sr=self.sr,
+                n_fft=self.n_fft,
+                hop_length=self.hop_length,
+                x_axis="time",
+                y_axis="log" if component["log_scale"] else "linear",
+                y_coords=self.freqs,
+                ax=ax,
+            )
+        else:
+            librosa.display.specshow(
+                s_db,
+                sr=self.sr,
+                n_fft=self.n_fft,
+                hop_length=self.hop_length,
+                x_axis="time",
+                y_axis="log" if component["log_scale"] else "linear",
+                y_coords=self.freqs,
+                ax=ax,
+            )
 
-        self.add_annotation_boxes(labels, start_time, end_time, ax1, offset=0.5, color=(0, 1, 1))
-        self.add_annotation_boxes(negative_labels, start_time, end_time, ax1, offset=0.5, color=(0, 0, 1))
+        ax.set_xticks(np.arange(0, self.duration + 1, 30))
+        
+        if component["labels"]:
+            self.add_annotation_boxes(component["labels"], self.start_time, self.end_time, ax, offset=0.5, color=(0, 1, 1))
+        if component["negative_labels"]:
+            self.add_annotation_boxes(component["negative_labels"], self.start_time, self.end_time, ax, offset=0.5, color=(0, 0, 1))
 
-        fairseq_time = [i * actual_duration / similarity.shape[0] for i in range(similarity.shape[0])]
-        ax2.plot(fairseq_time, similarity_scoresz[start_index:end_index], color="tab:green")
-        ax2.plot(fairseq_time, dissimilarity_scoresz[start_index:end_index], color="tab:red")
-        ax0.set_xlim(0, duration)
-        ax1.set_xlim(0, duration)
-        ax2.set_xlim(0, duration)
+    def _plot_similarities(self, ax: Axes, component: dict) -> None:
+        start_index = self.time_to_score_index(self.start_time)
+        end_index = self.time_to_score_index(self.end_time)
+        fairseq_time = [i * self.actual_duration / component["similarity"].shape[0] for i in range(component["similarity"].shape[0])]
+        print(f"end_time = {self.end_time}, end_index = {end_index}, similarity.shape = {component['similarity'].shape}, len(fairseq_time) = {len(fairseq_time)}")
+        end_index = len(fairseq_time)
+        ax.plot(fairseq_time, component["similarity"][start_index:end_index], color="tab:green")
+        ax.plot(fairseq_time, component["dissimilarity"][start_index:end_index], color="tab:red")
+        ax.set_xlim(0, self.duration)
+        ax.set_xticks(np.arange(0, self.duration + 1, 30))
 
-        hour, minute, _second = int(start_time // 60 // 60), int(start_time // 60) % 60, start_time % 60
+    def generate_plot(self) -> None:
+        plt.ioff()
+        n_subplots = len(self.plot_components)
+        if n_subplots == 0:
+            raise ValueError("No plot components added")
+
+        height_ratios = [1 if comp == "waveform" or comp.get("type") == "similarities" else 3 
+                        for comp in self.plot_components]
+        gs = {"height_ratios": height_ratios}
+        self.fig, self.axes = plt.subplots(n_subplots, 1, sharex=True, 
+                                         figsize=(self.width, self.height), 
+                                         gridspec_kw=gs)
+        if n_subplots == 1:
+            self.axes = [self.axes]
+
+        for ax, component in zip(self.axes, self.plot_components):
+            if component == "waveform":
+                self._plot_waveform(ax)
+            elif component.get("type") == "spectrogram":
+                self._plot_spectrogram(ax, component)
+            elif component.get("type") == "similarities":
+                self._plot_similarities(ax, component)
+
+        # Enable x-axis ticks and labels for all subplots
+        for ax in self.axes:
+            ax.tick_params(axis='x', which='both', bottom=True, top=False, labelbottom=True)
+            ax.set_xlabel('Time')
+            print(f"duration = {self.duration}")
+            # Set x-ticks based on duration
+            if self.duration <= 10:  # For very short clips
+                tick_interval = 1  # One tick per second
+            elif self.duration <= 60:  # Up to 1 minute
+                tick_interval = 5  # Tick every 5 seconds
+            elif self.duration <= 300:  # Up to 5 minutes
+                tick_interval = 30  # Tick every 30 seconds
+            elif self.duration <= 3600:  # Up to 1 hour
+                tick_interval = 300  # Tick every 5 minutes
+            elif self.duration <= 7200:  # Up to 2 hours
+                tick_interval = 600  # Tick every 10 minutes
+            elif self.duration <= 86400:  # Up to 24 hours
+                tick_interval = 3600  # Tick every hour
+            else:  # More than 24 hours
+                tick_interval = 7200  # Tick every 2 hours
+                
+            ax.set_xticks(np.arange(0, self.duration + 1, tick_interval))
+
+        hour, minute = int(self.start_time // 60 // 60), int(self.start_time // 60) % 60
         displaytime = f"{hour:02}:{minute:02}"
 
         plt.subplots_adjust(top=0.93, left=0)
-        fig.suptitle(f"{title}", fontsize=16, ha="left", x=0)
+        self.fig.suptitle(f"{self.title}", fontsize=16, ha="left", x=0)
         self.logger.debug("  saving %s", displaytime)
 
-        plt.savefig(save_file, bbox_inches="tight", pad_inches=0.02)
+        plt.savefig(self.save_file, bbox_inches="tight", pad_inches=0.02)
         plt.close()
         plt.close("all")
-        self.logger.info("  visualizations saved to %s", save_file)
+        self.logger.info("  visualizations saved to %s", self.save_file)
 
 
 
@@ -216,44 +346,12 @@ class AudioFileVisualizer:
         negative_labels: list | None = None,
         try_per_channel_normalization_on_power: bool = True,
         clip_outliers: bool = True,
+        log_scale: bool = False,
     ) -> None:
-        import time
-
-        if negative_labels is None:
-            negative_labels = []
-        if labels is None:
-            labels = []
-            
-        t0 = time.time()
-        start_index = self.time_to_score_index(start_time)
-        end_index = self.time_to_score_index(end_time)
-        similarity = similarity_scoresz[start_index:end_index].clone()
-        dissimilarity = dissimilarity_scoresz[start_index:end_index].clone()
-
-        duration = end_time - start_time
-        actual_duration = self.audio.shape[0] / self.sr
-        self.logger.debug("  duration intended=%s actual=%s", duration, actual_duration)
-
-        np_spectral_power = self._normalize_spectral_power(self.spectral_power, try_per_channel_normalization_on_power, clip_outliers)
-        s_db = librosa.power_to_db(np_spectral_power, ref=np.max)
-
-        mx = np.max(s_db)
-        mn = np.min(s_db)
-        normed = (s_db - mn) / (mx - mn)
-        s_db_rgb = np.stack((normed, normed, normed), axis=-1)
-        self.logger.debug("  coloring at %s", time.time() - t0)
-
-        stretched_similarity = self.interpolate_1d_tensor(similarity, self.spec.shape[1])
-        stretched_dissimilarity = self.interpolate_1d_tensor(dissimilarity, self.spec.shape[1])
-
-        redness, greenness, blueness = self._compute_color_channels(stretched_similarity, stretched_dissimilarity, colormap)
-
-        s_db_rgb[:, :, 0] = s_db_rgb[:, :, 0] * redness
-        s_db_rgb[:, :, 1] = s_db_rgb[:, :, 1] * greenness
-        s_db_rgb[:, :, 2] = s_db_rgb[:, :, 2] * blueness
-
-        self.logger.debug("  plotting at %s", time.time() - t0)
-
-        self._create_plot(s_db_rgb, duration, actual_duration,
-                         similarity, similarity_scoresz, dissimilarity_scoresz, start_index, end_index,
-                         labels, negative_labels, start_time, end_time, width, height, title, save_file)
+        # For backwards compatibility
+        self.setup_plot(title, save_file, start_time, end_time, width, height)
+        self.add_waveform()
+        self.add_spectrogram(labels, negative_labels, try_per_channel_normalization_on_power,
+                           clip_outliers, similarity_scoresz, dissimilarity_scoresz, colormap, log_scale)
+        self.add_similarities(similarity_scoresz, dissimilarity_scoresz)
+        self.generate_plot()
