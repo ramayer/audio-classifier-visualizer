@@ -16,39 +16,49 @@ if TYPE_CHECKING:
 
 class AudioFileVisualizer:
     def __init__(self, audio_file: str, 
-                 start_time: float = 0, end_time: float | None = None, 
+                 start_time: float = 0, 
+                 end_time: float | None = None, 
                  n_fft: int = 2048,
-                 sr: int = 2000, feature_rate: int|None = None) -> None:
+                 sr: int = 2000, 
+                 feature_rate: int|None = None,
+                 class_probabilities: torch.Tensor | None = None,
+                 class_labels: list[str] | None = None
+                 ) -> None:
         """Initialize the AudioFileVisualizer.
         
         Args:
             audio_file: Path to audio file to visualize
             start_time: Start time in seconds to load from
             end_time: End time in seconds to load until (default: entire file)
+            n_fft: Size of FFT window
+            sr: Sample rate to load audio at
+            feature_rate: Rate of features in Hz (default: sr/320)
+            class_probabilities: Tensor of shape (num_features, num_classes) containing class probabilities
+            class_labels: List of class names corresponding to probabilities
         """
         self.logger = logging.getLogger(__name__)
         
         # Load audio
         self.audio, self.sr = librosa.load(audio_file, sr=sr, offset=start_time, duration=None if end_time is None else end_time - start_time)
         self.duration = self.audio.shape[0] / self.sr
-        
+        self.audio_duration = self.audio.shape[0] / self.sr
+
         # Compute spectral features
         self.n_fft = n_fft
         self.hop_length = self.n_fft // 4
 
-        if feature_rate is None:
-            # Default for AVES/HuBERT embeddings
-            # from https://arxiv.org/pdf/2106.07447
-            default_feature_rate = 320
-            self.feature_rate = self.sr // default_feature_rate
-        else:
-            self.feature_rate = feature_rate
+        # Default for AVES/HuBERT embeddings
+        # from https://arxiv.org/pdf/2106.07447
+        self.feature_rate = self.sr // 320 if feature_rate is None else feature_rate
         
         # Compute STFT and spectral power
         self.spec = librosa.stft(self.audio, n_fft=self.n_fft, win_length=self.n_fft, hop_length=self.hop_length)
-        #self.spec = librosa.stft(self.audio)
         self.freqs = librosa.fft_frequencies(sr=self.sr, n_fft=self.n_fft)
         self.spectral_power = np.abs(self.spec) ** 2  # type: ignore
+
+        # Store class probabilities and labels
+        self.class_probabilities = class_probabilities
+        self.class_labels = class_labels
 
         # Initialize plot components
         self.plot_components = []
@@ -56,8 +66,6 @@ class AudioFileVisualizer:
         self.axes = []
         self.title = ""
         self.save_file = ""
-        self.duration = 0
-        self.actual_duration = 0
         self.start_time = 0
         self.end_time = 0
         self.width = 0
@@ -164,7 +172,7 @@ class AudioFileVisualizer:
         self.width = width
         self.height = height
         self.duration = end_time - start_time
-        self.actual_duration = self.audio.shape[0] / self.sr
+        self.audio_duration = self.audio.shape[0] / self.sr
 
     def add_waveform(self) -> None:
         self.plot_components.append("waveform")
@@ -194,8 +202,16 @@ class AudioFileVisualizer:
             "dissimilarity": dissimilarity_scoresz
         })
 
+    def add_class_probabilities(self) -> None:
+        if self.class_probabilities is not None:
+            self.plot_components.append({
+                "type": "class_probabilities",
+                "probabilities": self.class_probabilities,
+                "labels": self.class_labels
+            })
+
     def _plot_waveform(self, ax: Axes) -> None:
-        times = np.linspace(0, self.actual_duration, len(self.audio))
+        times = np.linspace(0, self.audio_duration, len(self.audio))
         ax.plot(times, self.audio, linewidth=0.5)
         ax.set_ylabel('Amplitude')
         ax.set_xlim(0, self.duration)
@@ -210,8 +226,8 @@ class AudioFileVisualizer:
         s_db = librosa.power_to_db(np_spectral_power, ref=np.max)
         
         if component["similarity"] is not None and component["dissimilarity"] is not None:
-            start_index = self.time_to_score_index(self.start_time)
-            end_index = self.time_to_score_index(self.end_time)
+            start_index = int(self.time_to_score_index(self.start_time))
+            end_index = int(self.time_to_score_index(self.end_time))
             similarity = component["similarity"][start_index:end_index].clone()
             dissimilarity = component["dissimilarity"][start_index:end_index].clone()
             
@@ -260,9 +276,9 @@ class AudioFileVisualizer:
             self.add_annotation_boxes(component["negative_labels"], self.start_time, self.end_time, ax, offset=0.5, color=(0, 0, 1))
 
     def _plot_similarities(self, ax: Axes, component: dict) -> None:
-        start_index = self.time_to_score_index(self.start_time)
-        end_index = self.time_to_score_index(self.end_time)
-        fairseq_time = [i * self.actual_duration / component["similarity"].shape[0] for i in range(component["similarity"].shape[0])]
+        start_index = int(self.time_to_score_index(self.start_time))
+        end_index = int(self.time_to_score_index(self.end_time))
+        fairseq_time = [i * self.audio_duration / component["similarity"].shape[0] for i in range(component["similarity"].shape[0])]
         print(f"end_time = {self.end_time}, end_index = {end_index}, similarity.shape = {component['similarity'].shape}, len(fairseq_time) = {len(fairseq_time)}")
         end_index = len(fairseq_time)
         ax.plot(fairseq_time, component["similarity"][start_index:end_index], color="tab:green")
@@ -270,13 +286,49 @@ class AudioFileVisualizer:
         ax.set_xlim(0, self.duration)
         ax.set_xticks(np.arange(0, self.duration + 1, 30))
 
+    def _plot_class_probabilities(self, ax: Axes, component: dict) -> None:
+        probs = self.class_probabilities
+        labels = self.class_labels
+        
+        print(f"probs.shape = {probs.shape}, labels = {labels}, feature_rate = {self.feature_rate}")
+
+        time_axis = np.arange(probs.shape[0]) / self.feature_rate
+        print(f"time_axis = {time_axis[0:3]} ... {time_axis[-10:]}")
+        ax.stackplot(time_axis, probs.T, labels=labels)
+        ax.legend(loc='upper right')
+        ax.set_xlim(0, self.duration)
+        ax.set_ylim(0, 1)
+        ax.set_ylabel('Class Probabilities')
+        ax.set_xticks(np.arange(0, self.duration + 1, 30))
+
+
+    
+    def _plot_class_probability_lines(self, ax: Axes, component: dict) -> None:
+        probs = self.class_probabilities
+        labels = self.class_labels
+        
+        print(f"probs.shape = {probs.shape}, labels = {labels}, feature_rate = {self.feature_rate}")
+
+        time_axis = np.arange(probs.shape[0]) / self.feature_rate
+        print(f"time_axis = {time_axis[0:3]} ... {time_axis[-10:]}")
+        # ax.stackplot(time_axis, probs.T, labels=labels)
+        for i in range(probs.shape[1]):
+            ax.plot(time_axis, probs[:, i], label=labels[i])
+
+        ax.legend(loc='upper right')
+        ax.set_xlim(0, self.duration)
+        ax.set_ylim(0, 1)
+        ax.set_ylabel('Class Probabilities')
+        ax.set_xticks(np.arange(0, self.duration + 1, 30))
+
+
     def generate_plot(self) -> None:
         plt.ioff()
         n_subplots = len(self.plot_components)
         if n_subplots == 0:
             raise ValueError("No plot components added")
 
-        height_ratios = [1 if comp == "waveform" or comp.get("type") == "similarities" else 3 
+        height_ratios = [1 if comp == "waveform" or comp.get("type") in ["similarities", "class_probabilities"] else 3 
                         for comp in self.plot_components]
         gs = {"height_ratios": height_ratios}
         self.fig, self.axes = plt.subplots(n_subplots, 1, sharex=True, 
@@ -292,6 +344,9 @@ class AudioFileVisualizer:
                 self._plot_spectrogram(ax, component)
             elif component.get("type") == "similarities":
                 self._plot_similarities(ax, component)
+            elif component.get("type") == "class_probabilities":
+                # self._plot_class_probabilities(ax, component)
+                self._plot_class_probability_lines(ax, component)
 
         # Enable x-axis ticks and labels for all subplots
         for ax in self.axes:
@@ -328,8 +383,6 @@ class AudioFileVisualizer:
         plt.close("all")
         self.logger.info("  visualizations saved to %s", self.save_file)
 
-
-
     def visualize_audio_file_fragment(
         self,
         title: str,
@@ -349,9 +402,57 @@ class AudioFileVisualizer:
         log_scale: bool = False,
     ) -> None:
         # For backwards compatibility
+        if end_time is None:
+            end_time = self.duration
         self.setup_plot(title, save_file, start_time, end_time, width, height)
         self.add_waveform()
         self.add_spectrogram(labels, negative_labels, try_per_channel_normalization_on_power,
                            clip_outliers, similarity_scoresz, dissimilarity_scoresz, colormap, log_scale)
         self.add_similarities(similarity_scoresz, dissimilarity_scoresz)
+        if self.class_probabilities is not None:
+            self.add_class_probabilities()
         self.generate_plot()
+
+if __name__ == "__main__":
+    import audio_classifier_visualizer as acv
+    import numpy as np
+    import torch
+    audio_path = '/tmp/test.wav'
+
+
+    y, sr = librosa.load(audio_path, sr=None, duration=60*5)
+    expected_embedding_length = y.shape[0]//320
+
+    scores_yes = torch.linspace(0, 1, expected_embedding_length)
+    scores_no = torch.linspace(1, 0, expected_embedding_length)
+
+    probs = torch.stack([scores_yes, scores_no], dim=0).T
+    print(f"probs.shape = {probs.shape}")
+
+    afv = acv.AudioFileVisualizer(audio_path, 
+                                n_fft=512,
+                                start_time=0, 
+                                end_time=60*5,
+                                sr=2000,
+                                class_probabilities=probs,
+                                class_labels=["yes", "no"],
+                                )  # Added class probabilities here
+
+
+    afv.visualize_audio_file_fragment(
+        f"demo",
+        '/tmp/1.png',
+        # audio_path,
+        scores_yes,
+        scores_no,
+        None,
+        start_time=0,
+        end_time=60*5,
+        colormap='raw',
+        width=10,
+        height=5,
+        labels=None  # Add the demo labels
+    )
+    from PIL import Image
+    import IPython.display as ipd
+    ipd.display(Image.open('/tmp/1.png'))
