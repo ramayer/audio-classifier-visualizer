@@ -1,26 +1,64 @@
+from __future__ import annotations
+
 import dataclasses
 import logging
+from typing import TYPE_CHECKING, Any
 
 import librosa
 import matplotlib.pyplot as plt
 import numpy as np
-import torch.nn.functional
+import torch
 from matplotlib import patches
 
-from audio_classifier_visualizer import audio_file_processor as afp
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
 
 
 class AudioFileVisualizer:
-    def __init__(self):
+    """Visualizes audio files and their classification results.
+
+    This class provides functionality to create spectrograms and overlay
+    classification results and annotations on the visualizations.
+    """
+
+    def __init__(self) -> None:
+        """Initialize the AudioFileVisualizer."""
         self.logger = logging.getLogger(__name__)
 
-    def interpolate_1d_tensor(self, input_tensor, target_length):
-        # kinda crazy, but:
-        # https://stackoverflow.com/questions/73928655/resizing-a-vector-by-interpolation
+    def interpolate_1d_tensor(self, input_tensor: torch.Tensor, target_length: int) -> torch.Tensor:
+        """Interpolate a 1D tensor to a target length.
+
+        Args:
+            input_tensor: Input tensor to interpolate
+            target_length: Desired output length
+
+        Returns:
+            Interpolated tensor of target length
+        """
         z = input_tensor[None, None, :]
         return torch.nn.functional.interpolate(z, target_length)[0][0]
 
-    def add_annotation_boxes(self, labels, patch_start, patch_end, axarr, offset=0.2, only=None, color=(0.0, 1.0, 1.0)):
+    def add_annotation_boxes(
+        self,
+        labels: list[Any],
+        patch_start: float,
+        patch_end: float,
+        axarr: Axes,
+        offset: float = 0.2,
+        only: float | None = None,
+        color: tuple[float, float, float] = (0.0, 1.0, 1.0),
+    ) -> None:
+        """Add annotation boxes to the visualization.
+
+        Args:
+            labels: List of annotation labels
+            patch_start: Start time of the patch
+            patch_end: End time of the patch
+            axarr: Matplotlib axes to draw on
+            offset: Offset for box drawing (default: 0.2)
+            only: If set, only draw box for this time point
+            color: RGB color tuple for the boxes
+        """
         for row in labels:
             bt, et, lf, hf, dur, fn, tags, notes, tag1, tag2, score, raven_file = dataclasses.astuple(row)
             if et < patch_start:
@@ -55,7 +93,7 @@ class AudioFileVisualizer:
         audio_file,
         similarity_scoresz,
         dissimilarity_scoresz,
-        audio_file_processor: afp.AudioFileProcessor,
+        audio_file_processor,  # : afp.AudioFileProcessor,
         start_time=0,
         end_time=60 * 6,
         height=1280 / 100,

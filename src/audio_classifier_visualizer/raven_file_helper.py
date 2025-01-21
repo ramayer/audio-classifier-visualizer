@@ -7,6 +7,7 @@ import os
 import re
 from dataclasses import dataclass
 from string import Template
+from typing import Any
 
 import duckdb
 import torch
@@ -30,16 +31,16 @@ class RavenLabel:
 
 
 class RavenFileHelper:
-    def __init__(self, root_path=None):
-        self.logger = logging.getLogger(__name__)
-        self.ddb = duckdb.connect()
+    def __init__(self, root_path: str | None = None) -> None:
+        self.logger: logging.Logger = logging.getLogger(__name__)
+        self.ddb: duckdb.DuckDBPyConnection = duckdb.connect()
         if root_path:
-            self.root_path = root_path
-            self.raven_files = self.find_candidate_raven_files(root_path)
-            self.all_raven_data = self.all_raven_files_as_one_table(self.raven_files)
+            self.root_path: str = root_path
+            self.raven_files: list[str] = self.find_candidate_raven_files(root_path)
+            self.all_raven_data: duckdb.DuckDBPyRelation = self.all_raven_files_as_one_table(self.raven_files)
             self.identify_useful_files()
 
-    def find_continuous_segments(self, boolean_tensor):
+    def find_continuous_segments(self, boolean_tensor: torch.Tensor) -> list[tuple[int, int]]:
         if boolean_tensor.shape[0] == 0:
             return []
         sign_changes = torch.cat(
@@ -56,13 +57,15 @@ class RavenFileHelper:
                 segments.append((start.item(), end.item() - 1))
         return segments
 
-    def find_long_enough_segments(self, segments, n=3):
+    def find_long_enough_segments(self, segments: list[tuple[int, int]], n: int = 3) -> list[tuple[int, int]]:
         return [(a, b) for a, b in segments if b - a >= n]
 
-    def save_segments_to_raven_file(self, raven_labels, filename, _audio_file_name, _audio_file_processor):
+    def save_segments_to_raven_file(
+        self, raven_labels: list[RavenLabel], filename: str, _audio_file_name: str, _audio_file_processor: Any
+    ) -> None:
         self.write_raven_file(raven_labels, filename)
 
-    def find_candidate_raven_files(self, root_path):
+    def find_candidate_raven_files(self, root_path: str) -> list[str]:
         pattern = root_path + "/**/*.txt"
         txtfiles = glob.glob(pattern, recursive=True)
         raven_files = []
@@ -72,7 +75,7 @@ class RavenFileHelper:
                 raven_files.append(txtfile)
         return raven_files
 
-    def load_one_raven_file(self, raven_file):
+    def load_one_raven_file(self, raven_file: str) -> list[RavenLabel]:
         """usage
         rfh.load_one_raven_file('/tmp/rf.raven')
         """
@@ -116,7 +119,7 @@ class RavenFileHelper:
         )
         return [RavenLabel(*row) for row in useful_cols.fetchall()]
 
-    def all_raven_files_as_one_table(self, raven_files):
+    def all_raven_files_as_one_table(self, raven_files: list[str]) -> duckdb.DuckDBPyRelation:
         for idx, f in enumerate(raven_files):
             sql_template = Template("""
                 CREATE OR REPLACE VIEW raven_file_$idx as
@@ -155,7 +158,7 @@ class RavenFileHelper:
         )
         return self.ddb.sql("select * from all_raven_files")
 
-    def write_raven_file(self, labels, output_filename):
+    def write_raven_file(self, labels: list[RavenLabel], output_filename: str) -> None:
         raven_file_columns = [
             "Selection",
             "View",
@@ -230,7 +233,7 @@ class RavenFileHelper:
                 ]
                 writer.writerow(data)
 
-    def get_all_labels_for_wav_file(self, wav_file):
+    def get_all_labels_for_wav_file(self, wav_file: str) -> list[RavenLabel]:
         """
         Usage:
              lbls = rfh.get_all_labels_for_wav_file('CEB1_20111010_000000.wav')
@@ -256,32 +259,34 @@ class RavenFileHelper:
     # Training tools (not needed for inferrence)
     ################################################################################
 
-    def get_files_from_test_folder(self):
+    def get_files_from_test_folder(self) -> list[str]:
         ifs = self.get_interesting_files()
         return [f for f in ifs if "Test" in self.audio_filename_to_path[f]]
 
-    def get_files_from_train_folder(self):
+    def get_files_from_train_folder(self) -> list[str]:
         ifs = self.get_interesting_files()
         return [f for f in ifs if "Train" in self.audio_filename_to_path[f]]
 
-    def find_candidate_audio_files(self, root_path):
+    def find_candidate_audio_files(self, root_path: str) -> list[str]:
         pattern = root_path + "/**/*.wav"
         return glob.glob(pattern, recursive=True)
 
-    def identify_useful_files(self):
+    def identify_useful_files(self) -> set[str]:
         audio_files = self.find_candidate_audio_files(self.root_path)
-        self.files_from_raven = self.ddb.sql('select distinct "Begin File" from all_raven_files').fetchall()
+        self.files_from_raven: list[tuple[str]] = self.ddb.sql(
+            'select distinct "Begin File" from all_raven_files'
+        ).fetchall()
         files_from_raven_with_fixed_names = {re.sub("dzan", "dz", row[0]) for row in self.files_from_raven}
-        self.audio_filename_to_path = {re.sub(".*/", "", f): f for f in audio_files}
+        self.audio_filename_to_path: dict[str, str] = {re.sub(".*/", "", f): f for f in audio_files}
         audio_files_without_path = {re.sub(".*/", "", f) for f in audio_files}
         return files_from_raven_with_fixed_names & audio_files_without_path
 
-    def get_interesting_files(self):
+    def get_interesting_files(self) -> set[str]:
         return self.identify_useful_files()
 
     ## Helper functions to quickly get 1khz samples from files
 
-    def load_entire_wav_file(self, wav_file_path, new_sr=None):
+    def load_entire_wav_file(self, wav_file_path: str, new_sr: int | None = None) -> torch.Tensor:
         import torchaudio.io as tai
 
         if not new_sr:
@@ -304,11 +309,11 @@ class RavenFileHelper:
             results.append(chunk)
         return torch.cat(results)
 
-    def get_cached_path(self, audio_filename, new_sr, prefix="/tmp/downsampled_audio"):  # noqa: S108
+    def get_cached_path(self, audio_filename: str, new_sr: int, prefix: str = "/tmp/downsampled_audio") -> str:  # noqa: S108
         os.makedirs(prefix, exist_ok=True)
         return f"{prefix}/{audio_filename}.{new_sr}.pt"
 
-    def precompute_downsampled_pytorch_tensor(self, audio_filename, new_sr):
+    def precompute_downsampled_pytorch_tensor(self, audio_filename: str, new_sr: int) -> None:
         cached_path = self.get_cached_path(audio_filename, new_sr)
         self.logger.info("resampling %s to %d at %s", audio_filename, new_sr, cached_path)
         source_path = self.audio_filename_to_path[audio_filename]
@@ -316,7 +321,7 @@ class RavenFileHelper:
         audio_samples = audio_samples.flatten().to(torch.float16)
         torch.save(audio_samples, cached_path)
 
-    def get_downsampled_tensor(self, audio_filename, start, duration, new_sr):
+    def get_downsampled_tensor(self, audio_filename: str, start: float, duration: float, new_sr: int) -> torch.Tensor:
         cached_path = self.get_cached_path(audio_filename, new_sr)
         if not os.path.exists(cached_path):
             self.precompute_downsampled_pytorch_tensor(audio_filename, new_sr)
@@ -326,7 +331,7 @@ class RavenFileHelper:
     ## End of Helper functions to quickly get 1khz samples from files
 
     ## NEGATIVE LABELS
-    def get_negative_labels(self, positive_labels):
+    def get_negative_labels(self, positive_labels: list[RavenLabel]) -> list[RavenLabel]:
         """
         get a fragment with no lables half-way between the positive labels
         """

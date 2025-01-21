@@ -7,37 +7,37 @@ from torch import nn
 class ElephantRumbleClassifier(nn.Module):
     def __init__(
         self,
-        input_dim=768,
-        hidden_dim=768 // 4,
-        output_dim=2,
-        dropout=0.2,
-    ):
+        input_dim: int = 768,
+        hidden_dim: int = 768 // 4,
+        output_dim: int = 2,
+        dropout: float = 0.2,
+    ) -> None:
         super().__init__()
-        self.model_name = "[no weights loaded]"
+        self.model_name: str = "[no weights loaded]"
         self.act = nn.LeakyReLU()
         self.linear1 = nn.Linear(input_dim, hidden_dim)
         self.linear2 = nn.Linear(hidden_dim, output_dim)
         self.dropout = nn.Dropout(p=dropout)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.dropout(x)
         x = self.linear1(x)
         x = self.act(x)
         x = self.dropout(x)
         return self.linear2(x)
 
-    def get_cache_prefix(self):
+    def get_cache_prefix(self) -> str:
         cache_prefix = torch.hub.get_dir()
         return os.path.join(cache_prefix, "fruitpunch_elephants")
 
-    def choose_model_weights(self, model_name):
+    def choose_model_weights(self, model_name: str) -> str:
         if model_name in ["best", "training", "best_using_training_data_only"]:
             return "best.pth"
         if model_name in ["enhanced", "best_using_more_varied_training_data"]:
             return "best.pth"
         return model_name
 
-    def load_pretrained_weights(self, model_name):
+    def load_pretrained_weights(self, model_name: str) -> None:
         if os.path.exists(model_name):
             self.load_state_dict(torch.load(model_name))
             self.eval()
@@ -52,7 +52,7 @@ class ElephantRumbleClassifier(nn.Module):
         self.load_state_dict(torch.load(model_weights_file))
         self.eval()
 
-    def download_model_files_if_needed(self, pretrained_weights):
+    def download_model_files_if_needed(self, pretrained_weights: str) -> None:
         src_prefix = "https://0ape.com/pretrained_models"
         dst_prefix = self.get_cache_prefix()
         src = f"{src_prefix}/{pretrained_weights}"
