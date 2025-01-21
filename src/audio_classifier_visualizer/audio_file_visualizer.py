@@ -136,6 +136,7 @@ class AudioFileVisualizer:
         return np_spectral_power
 
     def _compute_color_channels(self, stretched_similarity: torch.Tensor, stretched_dissimilarity: torch.Tensor, colormap: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        colormap = "bright"
         if colormap == "clean":
             nearness = stretched_similarity
             farness = stretched_dissimilarity
@@ -151,6 +152,23 @@ class AudioFileVisualizer:
             greenness = sim * 8 + 1
             greenness[greenness > 1] = 1
             greenness[greenness < 0] = 0
+            
+        elif colormap == "bright":
+            nearness = stretched_similarity
+            farness = stretched_dissimilarity
+
+            sim = nearness - farness
+            sim /= sim.abs().max()
+            sim = sim.numpy()
+
+            # Create a smooth transition from red to yellow to green
+            # When sim is -1, we want red (1,0,0)
+            # When sim is 0, we want yellow (1,1,0) 
+            # When sim is 1, we want green (0,1,0)
+            
+            redness = np.clip(-sim + 1, 0, 1) 
+            greenness = np.clip(sim + 1, 0, 1)
+            
         else:
             redness = stretched_dissimilarity.numpy()
             greenness = stretched_similarity.numpy()
