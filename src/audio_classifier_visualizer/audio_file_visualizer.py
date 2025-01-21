@@ -321,6 +321,22 @@ class AudioFileVisualizer:
         ax.set_ylabel('Class Probabilities')
         ax.set_xticks(np.arange(0, self.duration + 1, 30))
 
+    def _get_tick_interval(self, duration: float) -> float:
+        """Calculate appropriate tick interval based on duration."""
+        if duration <= 10:  # For very short clips
+            return 1  # One tick per second
+        elif duration <= 60:  # Up to 1 minute
+            return 5  # Tick every 5 seconds
+        elif duration <= 300:  # Up to 5 minutes
+            return 30  # Tick every 30 seconds
+        elif duration <= 3600:  # Up to 1 hour
+            return 300  # Tick every 5 minutes
+        elif duration <= 7200:  # Up to 2 hours
+            return 600  # Tick every 10 minutes
+        elif duration <= 86400:  # Up to 24 hours
+            return 3600  # Tick every hour
+        else:  # More than 24 hours
+            return 7200  # Tick every 2 hours
 
     def generate_plot(self) -> None:
         plt.ioff()
@@ -345,30 +361,16 @@ class AudioFileVisualizer:
             elif component.get("type") == "similarities":
                 self._plot_similarities(ax, component)
             elif component.get("type") == "class_probabilities":
-                # self._plot_class_probabilities(ax, component)
-                self._plot_class_probability_lines(ax, component)
+                self._plot_class_probabilities(ax, component)
+                #self._plot_class_probability_lines(ax, component)
 
         # Enable x-axis ticks and labels for all subplots
         for ax in self.axes:
             ax.tick_params(axis='x', which='both', bottom=True, top=False, labelbottom=True)
             ax.set_xlabel('Time')
             print(f"duration = {self.duration}")
-            # Set x-ticks based on duration
-            if self.duration <= 10:  # For very short clips
-                tick_interval = 1  # One tick per second
-            elif self.duration <= 60:  # Up to 1 minute
-                tick_interval = 5  # Tick every 5 seconds
-            elif self.duration <= 300:  # Up to 5 minutes
-                tick_interval = 30  # Tick every 30 seconds
-            elif self.duration <= 3600:  # Up to 1 hour
-                tick_interval = 300  # Tick every 5 minutes
-            elif self.duration <= 7200:  # Up to 2 hours
-                tick_interval = 600  # Tick every 10 minutes
-            elif self.duration <= 86400:  # Up to 24 hours
-                tick_interval = 3600  # Tick every hour
-            else:  # More than 24 hours
-                tick_interval = 7200  # Tick every 2 hours
-                
+            
+            tick_interval = self._get_tick_interval(self.duration)
             ax.set_xticks(np.arange(0, self.duration + 1, tick_interval))
 
         hour, minute = int(self.start_time // 60 // 60), int(self.start_time // 60) % 60
