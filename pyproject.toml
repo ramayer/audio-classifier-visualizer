@@ -86,7 +86,17 @@ dependencies = [
 test = "pytest {args:tests}"
 test-cov = "pytest --cov {args:tests}"
 
-
 [tool.ruff.lint.extend-per-file-ignores]
 "src/audio_classifier_visualizer/main.py"= ["T201"]
 "tests/*" = ["T201"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "pkg/*.py",
+  "/tests",
+]
+exclude = [
+  "*.json",
+  "pkg/_compat.py",
+  "/notebooks"
+]
