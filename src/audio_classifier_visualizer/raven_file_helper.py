@@ -20,14 +20,14 @@ class RavenLabel:
     et: float
     lf: float
     hf: float
-    duration: float
-    audio_file: str
-    t1: str | None
-    t2: str | None
-    t3: str | None
-    notes: str | None
-    score: float | None
-    ravenfile: str | None
+    duration: float | None = None
+    audio_file: str | None = None
+    t1: str | None = None
+    t2: str | None = None
+    t3: str | None = None
+    notes: str | None = None
+    score: float | None = None
+    ravenfile: str | None = None
 
 
 class RavenFileHelper:
