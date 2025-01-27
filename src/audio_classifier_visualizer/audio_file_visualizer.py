@@ -43,6 +43,7 @@ class _SpectrogramComponent:
         self.try_per_channel_normalization = try_per_channel_normalization
         self.clip_outliers = clip_outliers
 
+
         # TODO: single array of labels of many classes
         self.label_boxes = label_boxes
 
@@ -87,14 +88,12 @@ class _SpectrogramComponent:
             color: RGB color tuple for the boxes
         """
         for row in labels:
-            bt, et, lf, hf, dur, fn, tags, notes, tag1, tag2, score, raven_file = dataclasses.astuple(row)
-            if et < patch_start:
+            # bt, et, lf, hf, dur, fn, tags, notes, tag1, tag2, score, raven_file = dataclasses.astuple(row)
+            if row.et < patch_start or row.bt > patch_end:
                 continue
-            if bt > patch_end:
-                continue
-            xy = (bt - patch_start - offset, lf - 5)
-            width = et - bt + offset * 2
-            height = hf - lf + 10
+            xy = (row.bt - patch_start - offset, row.lf - 5)
+            width = row.et - row.bt + offset * 2
+            height = row.hf - row.lf + 10
 
             for linewidth, edgecolor in [(3, (0, 0, 0)), (1, color)]:
                 rect = patches.Rectangle(
@@ -106,6 +105,13 @@ class _SpectrogramComponent:
                     facecolor="none",
                 )
                 axarr.add_patch(rect)
+
+                # Add label below the box with a dark background
+                label_x, label_y = (xy[0] + 2, xy[1] + height + 10)  # Adjust the y position as needed
+                bbox_props = {"boxstyle": "round,pad=0.3", "edgecolor": edgecolor, "facecolor": "black", "alpha": 0.7}
+                axarr.text(
+                    label_x, label_y, row.notes, ha="left", va="bottom", fontsize=12, color="white", bbox=bbox_props
+                )
 
     def _normalize_spectral_power(
         self,
@@ -205,17 +211,10 @@ class _SpectrogramComponent:
             s_db_rgb[:, :, 2] = s_db_rgb[:, :, 2] * blueness
 
             # bailing on librosa?
-            self.log_scale = 0
             if self.log_scale:
-                ax.imshow(
-                    s_db_rgb.transpose(0, 1, 2),
-                    aspect="auto",
-                    origin="lower",
-                    extent=[self.start_time, self.end_time, 0, np.log10(self.freqs[-1])],
-                )
-                ax.set_yticks(np.log10(np.arange(1, self.freqs[-1] + 1, 100)))  # Example tick interval
-                ax.set_yticklabels(np.arange(1, self.freqs[-1] + 1, 100))  # Show Hz values
-            else:
+                msg = "Log scale functionality is temporarily broken."
+                raise NotImplementedError(msg)
+            else:  # noqa: RET506
                 ax.imshow(
                     s_db_rgb.transpose(0, 1, 2),
                     aspect="auto",
@@ -256,11 +255,12 @@ class _SpectrogramComponent:
 class AudioFileVisualizer:
     def __init__(
         self,
-        audio_file: str,
+        audio_file: str | None = None,
+        y: np.ndarray | None = None,
+        sr: int | None = None,
         start_time: float = 0,
         end_time: float | None = None,
         n_fft: int = 2048,
-        sr: int = 2000,
         feature_rate: int | None = None,
         class_probabilities: torch.Tensor | None = None,
         class_labels: list[str] | None = None,
@@ -270,9 +270,15 @@ class AudioFileVisualizer:
         self.logger = logging.getLogger(__name__)
 
         # Load audio
-        self.audio, self.sr = librosa.load(
-            audio_file, sr=sr, offset=start_time, duration=None if end_time is None else end_time - start_time
-        )
+        if audio_file:
+            self.audio, self.sr = librosa.load(
+                audio_file, sr=sr, 
+                offset=start_time, 
+                duration=None if end_time is None else end_time - start_time
+            )
+        elif y is not None and sr:
+            self.audio, self.sr = y,sr
+
         self.audio_duration = self.audio.shape[0] / self.sr
 
         # Default for AVES/HuBERT embeddings
@@ -280,6 +286,7 @@ class AudioFileVisualizer:
         self.feature_rate = self.sr // 320 if feature_rate is None else feature_rate
         self.class_probabilities = class_probabilities
         self.class_labels = class_labels
+        self.target_class = target_class
 
         # Compute spectral features
         self.spectrogram_component = _SpectrogramComponent(
@@ -361,14 +368,18 @@ class AudioFileVisualizer:
         # ax.set_xticks(np.arange(0, self.duration + 1, 30))
 
     def _plot_similarities(self, ax: Axes) -> None:
-        similarity = self.class_probabilities[:, 1]
-        dissimilarity = self.class_probabilities[:, 0]
-        start_index = int(self.time_to_score_index(self.start_time))
-        end_index = int(self.time_to_score_index(self.end_time))
-        fairseq_time = [i * self.audio_duration / similarity.shape[0] for i in range(similarity.shape[0])]
-        end_index = len(fairseq_time)
-        ax.plot(fairseq_time[start_index:end_index], similarity[start_index:end_index], color="tab:green")
-        ax.plot(fairseq_time[start_index:end_index], dissimilarity[start_index:end_index], color="tab:red")
+        similarity = self.class_probabilities[:, self.target_class or 1]
+        dissimilarity = 1 - similarity
+        time_axis = np.arange(similarity.shape[0]) / self.feature_rate
+        ax.plot(time_axis,similarity, color="tab:green")
+        ax.plot(time_axis,dissimilarity, color="tab:red")
+        ax.set_ylabel(self.class_labels[self.target_class or 1])
+        ### For efficience we may want to limit how many samples we give matplotlib later
+        #start_index = int(self.time_to_score_index(self.start_time))
+        #end_index = int(self.time_to_score_index(self.end_time))
+        #fairseq_time = [i * self.feature_rate for i in range(similarity.shape[0])]
+        #ax.plot(fairseq_time[start_index:end_index], similarity[start_index:end_index], color="tab:green")
+        #ax.plot(fairseq_time[start_index:end_index], dissimilarity[start_index:end_index], color="tab:red")
         # ax.set_xlim(0, self.duration)
         # ax.set_xticks(np.arange(0, self.duration + 1, 30))
 
@@ -456,9 +467,10 @@ class AudioFileVisualizer:
 
         if self.save_file:
             plt.savefig(self.save_file, bbox_inches="tight", pad_inches=0.02)
-        plt.close()
-        plt.close("all")
+            plt.close()
+            plt.close("all")
         self.logger.info("  visualizations saved to %s", self.save_file)
+        return plt
 
     def visualize_audio_file_fragment(
         self,
@@ -483,4 +495,4 @@ class AudioFileVisualizer:
         if end_time is None:
             end_time = self.audio_duration
         self.setup_plot(title, save_file, start_time, end_time, width, height)
-        self.generate_plot()
+        return self.generate_plot()
