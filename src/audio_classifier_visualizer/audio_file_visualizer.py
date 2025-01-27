@@ -43,7 +43,6 @@ class _SpectrogramComponent:
         self.try_per_channel_normalization = try_per_channel_normalization
         self.clip_outliers = clip_outliers
 
-
         # TODO: single array of labels of many classes
         self.label_boxes = label_boxes
 
@@ -272,12 +271,10 @@ class AudioFileVisualizer:
         # Load audio
         if audio_file:
             self.audio, self.sr = librosa.load(
-                audio_file, sr=sr, 
-                offset=start_time, 
-                duration=None if end_time is None else end_time - start_time
+                audio_file, sr=sr, offset=start_time, duration=None if end_time is None else end_time - start_time
             )
         elif y is not None and sr:
-            self.audio, self.sr = y,sr
+            self.audio, self.sr = y, sr
 
         self.audio_duration = self.audio.shape[0] / self.sr
 
@@ -371,15 +368,15 @@ class AudioFileVisualizer:
         similarity = self.class_probabilities[:, self.target_class or 1]
         dissimilarity = 1 - similarity
         time_axis = np.arange(similarity.shape[0]) / self.feature_rate
-        ax.plot(time_axis,similarity, color="tab:green")
-        ax.plot(time_axis,dissimilarity, color="tab:red")
+        ax.plot(time_axis, similarity, color="tab:green")
+        ax.plot(time_axis, dissimilarity, color="tab:red")
         ax.set_ylabel(self.class_labels[self.target_class or 1])
         ### For efficience we may want to limit how many samples we give matplotlib later
-        #start_index = int(self.time_to_score_index(self.start_time))
-        #end_index = int(self.time_to_score_index(self.end_time))
-        #fairseq_time = [i * self.feature_rate for i in range(similarity.shape[0])]
-        #ax.plot(fairseq_time[start_index:end_index], similarity[start_index:end_index], color="tab:green")
-        #ax.plot(fairseq_time[start_index:end_index], dissimilarity[start_index:end_index], color="tab:red")
+        # start_index = int(self.time_to_score_index(self.start_time))
+        # end_index = int(self.time_to_score_index(self.end_time))
+        # fairseq_time = [i * self.feature_rate for i in range(similarity.shape[0])]
+        # ax.plot(fairseq_time[start_index:end_index], similarity[start_index:end_index], color="tab:green")
+        # ax.plot(fairseq_time[start_index:end_index], dissimilarity[start_index:end_index], color="tab:red")
         # ax.set_xlim(0, self.duration)
         # ax.set_xticks(np.arange(0, self.duration + 1, 30))
 

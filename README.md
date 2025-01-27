@@ -7,6 +7,25 @@ A Python library for visualizing audio classifier outputs, including waveforms, 
 
 This library was extracted from the [elephant-rumble-inference](https://github.com/ramayer/elephant-rumble-inference) project, which uses deep learning to detect and classify elephant rumble vocalizations in audio recordings.
 
+
+<img src="docs/elephant_sound_visualization.png"></img>
+
+## Usage
+```python
+
+import audio_classifier_visualizer as acv
+
+afv = acv.AudioFileVisualizer("audio_file.wav",
+                              start_time=0, end_time=60*5, 
+                              feature_rate=feature_rate, class_probabilities=probs, class_labels = class_labels)
+
+plt = afv.visualize_audio_file_fragment(f"Title",  width=20, height=8)
+
+plt.show()
+```
+
+[Demo notebook here](notebooks/demo.ipynb)
+
 ## Features
 
 - Visualize audio waveforms
@@ -18,7 +37,7 @@ This library was extracted from the [elephant-rumble-inference](https://github.c
 ## Installation
 
 ```console
-pip install audio-classifier-visualizer
+pip install --quiet git+https://github.com/ramayer/audio-classifier-visualizer
 ```
 
 ## License
