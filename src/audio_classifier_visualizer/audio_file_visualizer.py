@@ -65,7 +65,7 @@ class _SpectrogramComponent:
 
     def interpolate_1d_tensor(self, input_tensor: torch.Tensor, target_length: int) -> torch.Tensor:
         z = input_tensor[None, None, :]
-        return torch.nn.functional.interpolate(z, target_length)[0][0]
+        return torch.nn.functional.interpolate(z, target_length, mode="linear")[0][0]
 
     def add_annotation_boxes(
         self,
@@ -265,6 +265,7 @@ class AudioFileVisualizer:
         class_labels: list[str] | None = None,
         label_boxes: list[Any] | None = None,
         target_class: int | None = None,
+        resample_to_sr: int | None = None,
     ) -> None:
         self.logger = logging.getLogger(__name__)
 
@@ -275,6 +276,10 @@ class AudioFileVisualizer:
             )
         elif y is not None and sr:
             self.audio, self.sr = y, sr
+
+        if resample_to_sr is not None:
+            self.audio = librosa.resample(self.audio, orig_sr=self.sr, target_sr=resample_to_sr)
+            self.sr = resample_to_sr
 
         self.audio_duration = self.audio.shape[0] / self.sr
 
@@ -305,7 +310,7 @@ class AudioFileVisualizer:
 
     def interpolate_1d_tensor(self, input_tensor: torch.Tensor, target_length: int) -> torch.Tensor:
         z = input_tensor[None, None, :]
-        return torch.nn.functional.interpolate(z, target_length)[0][0]
+        return torch.nn.functional.interpolate(z, target_length, mode="linear")[0][0]
 
     def add_annotation_boxes(
         self,
@@ -367,7 +372,7 @@ class AudioFileVisualizer:
     def _plot_similarities(self, ax: Axes) -> None:
         similarity = self.class_probabilities[:, self.target_class or 1]
         dissimilarity = 1 - similarity
-        time_axis = np.arange(similarity.shape[0]) / self.feature_rate
+        time_axis = np.arange(similarity.shape[0]) / self.feature_rate + 1 / self.feature_rate / 2
         ax.plot(time_axis, similarity, color="tab:green")
         ax.plot(time_axis, dissimilarity, color="tab:red")
         ax.set_ylabel(self.class_labels[self.target_class or 1])
@@ -384,7 +389,7 @@ class AudioFileVisualizer:
         probs = self.class_probabilities
         labels = self.class_labels
 
-        time_axis = np.arange(probs.shape[0]) / self.feature_rate
+        time_axis = np.arange(probs.shape[0]) / self.feature_rate + 1 / self.feature_rate / 2
         ax.stackplot(time_axis, probs.T, labels=labels)
         ax.legend(loc="upper right")
         # ax.set_xlim(0, self.duration)
@@ -396,7 +401,7 @@ class AudioFileVisualizer:
         probs = self.class_probabilities
         labels = self.class_labels
 
-        time_axis = np.arange(probs.shape[0]) / self.feature_rate
+        time_axis = np.arange(probs.shape[0]) / self.feature_rate + 1 / self.feature_rate / 2
         # ax.stackplot(time_axis, probs.T, labels=labels)
         for i in range(probs.shape[1]):
             ax.plot(time_axis, probs[:, i], label=labels[i])
@@ -409,7 +414,7 @@ class AudioFileVisualizer:
 
     def _get_tick_interval(self, duration: float) -> float:
         """Calculate appropriate human-friendly tick interval based on duration."""
-        intervals = {10: 1, 60: 5, 300: 30, 600: 60, 3600: 300, 7200: 600, 86400: 3600}
+        intervals = {1: 0.25, 3: 0.5, 10: 1, 60: 5, 300: 30, 600: 60, 3600: 300, 7200: 600, 86400: 3600}
         return next((v for k, v in intervals.items() if duration <= k), 7200)
 
     def generate_plot(self) -> None:
@@ -445,7 +450,7 @@ class AudioFileVisualizer:
             def format_time(x, _pos):
                 hours = int(x // 60 // 60)
                 minutes = int(x // 60)
-                seconds = int(x % 60)
+                seconds = x % 60
                 return f"{minutes}:{seconds:02}" if hours < 1 else f"{hours}:{minutes}:{seconds}"
 
             ax.xaxis.set_major_formatter(FuncFormatter(format_time))
