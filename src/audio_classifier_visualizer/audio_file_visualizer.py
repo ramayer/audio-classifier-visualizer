@@ -77,7 +77,7 @@ class _SpectrogramComponent:
         color: tuple[float, float, float] = (0.0, 1.0, 1.0),
     ) -> None:
         """Add annotation boxes to the visualization.
-
+            Cool
         Args:
             labels: List of annotation labels
             patch_start: Start time of the patch
@@ -106,10 +106,11 @@ class _SpectrogramComponent:
                 axarr.add_patch(rect)
 
                 # Add label below the box with a dark background
-                label_x, label_y = (xy[0] + 2, xy[1] + height + 10)  # Adjust the y position as needed
+                # TODO: the offset of the label should depend on the timescale being shown
+                label_x, label_y = (xy[0] + width, xy[1] + height * 1.2)  # Adjust the y position as needed
                 bbox_props = {"boxstyle": "round,pad=0.3", "edgecolor": edgecolor, "facecolor": "black", "alpha": 0.7}
                 axarr.text(
-                    label_x, label_y, row.notes, ha="left", va="bottom", fontsize=12, color="white", bbox=bbox_props
+                    label_x, label_y, row.notes, ha="right", va="bottom", fontsize=12, color="white", bbox=bbox_props
                 )
 
     def _normalize_spectral_power(
@@ -248,8 +249,16 @@ class _SpectrogramComponent:
         # ax.set_xticks(np.arange(0, self.duration + 1, 30))
 
         if self.label_boxes:
-            self.add_annotation_boxes(self.label_boxes, self.start_time, self.end_time, ax, offset=0.5, color=(0, 1, 1))
+            self.add_annotation_boxes(self.label_boxes, self.start_time, self.end_time, ax, offset=0.1, color=(0, 1, 1))
 
+from enum import Enum
+
+class Subplot(Enum):
+    WAVEFORM = "waveform"
+    SPECTROGRAM = "spectrogram"
+    SIMILARITIES = "similarities"
+    CLASS_PROBABILITIES = "class_probabilities"
+    CLASS_PROBABILITY_LINES = "class_probability_lines"
 
 class AudioFileVisualizer:
     def __init__(
@@ -302,6 +311,13 @@ class AudioFileVisualizer:
             label_boxes=label_boxes,
         )
 
+        self.enabled_subplots = {Subplot.WAVEFORM, 
+                                 Subplot.SPECTROGRAM, 
+                                 Subplot.SIMILARITIES, 
+                                 Subplot.CLASS_PROBABILITIES, 
+                                 #Subplot.CLASS_PROBABILITY_LINES,
+                                 }
+
     def time_to_score_index(self, t: float) -> int:
         return t * self.feature_rate
 
@@ -312,43 +328,44 @@ class AudioFileVisualizer:
         z = input_tensor[None, None, :]
         return torch.nn.functional.interpolate(z, target_length, mode="linear")[0][0]
 
-    def add_annotation_boxes(
-        self,
-        labels: list[Any],
-        patch_start: float,
-        patch_end: float,
-        axarr: Axes,
-        offset: float = 0.2,
-        color: tuple[float, float, float] = (0.0, 1.0, 1.0),
-    ) -> None:
-        """Add annotation boxes to the visualization.
+    # The one in the spectrum viewer is better
+    # def add_annotation_boxes(
+    #     self,
+    #     labels: list[Any],
+    #     patch_start: float,
+    #     patch_end: float,
+    #     axarr: Axes,
+    #     offset: float = 0.2,
+    #     color: tuple[float, float, float] = (0.0, 1.0, 1.0),
+    # ) -> None:
+    #     """Add annotation boxes to the visualization.
 
-        Args:
-            labels: List of annotation labels
-            patch_start: Start time of the patch
-            patch_end: End time of the patch
-            axarr: Matplotlib axes to draw on
-            offset: Offset for box drawing (default: 0.2)
-            color: RGB color tuple for the boxes
-        """
-        for row in labels:
-            bt, et, lf, hf, dur, fn, tags, notes, tag1, tag2, score, raven_file = dataclasses.astuple(row)
-            if et < patch_start or bt > patch_end:
-                continue
-            xy = (bt - patch_start - offset, lf - 5)
-            width = et - bt + offset * 2
-            height = hf - lf + 10
+    #     Args:
+    #         labels: List of annotation labels
+    #         patch_start: Start time of the patch
+    #         patch_end: End time of the patch
+    #         axarr: Matplotlib axes to draw on
+    #         offset: Offset for box drawing (default: 0.2)
+    #         color: RGB color tuple for the boxes
+    #     """
+    #     for row in labels:
+    #         bt, et, lf, hf, dur, fn, tags, notes, tag1, tag2, score, raven_file = dataclasses.astuple(row)
+    #         if et < patch_start or bt > patch_end:
+    #             continue
+    #         xy = (bt - patch_start - offset, lf - 5)
+    #         width = et - bt + offset * 2
+    #         height = hf - lf + 10
 
-            for linewidth, edgecolor in [(3, (0, 0, 0)), (1, color)]:
-                rect = patches.Rectangle(
-                    xy,
-                    width,
-                    height,
-                    linewidth=linewidth,
-                    edgecolor=edgecolor,
-                    facecolor="none",
-                )
-                axarr.add_patch(rect)
+    #         for linewidth, edgecolor in [(3, (0, 0, 0)), (1, color)]:
+    #             rect = patches.Rectangle(
+    #                 xy,
+    #                 width,
+    #                 height,
+    #                 linewidth=linewidth,
+    #                 edgecolor=edgecolor,
+    #                 facecolor="none",
+    #             )
+    #             axarr.add_patch(rect)
 
     def setup_plot(
         self, title: str, save_file: str, start_time: float, end_time: float, width: float, height: float
@@ -419,20 +436,43 @@ class AudioFileVisualizer:
 
     def generate_plot(self) -> None:
         plt.ioff()
-        n_subplots = 5
-        height_ratios = [1, 3, 1, 1, 1]
+        
+        
+
+        n_subplots = len(self.enabled_subplots)
+        height_ratios = [
+            1 if Subplot.WAVEFORM in self.enabled_subplots else 0,
+            3 if Subplot.SPECTROGRAM in self.enabled_subplots else 0,
+            1 if Subplot.SIMILARITIES in self.enabled_subplots else 0,
+            1 if Subplot.CLASS_PROBABILITIES in self.enabled_subplots else 0,
+            1 if Subplot.CLASS_PROBABILITY_LINES in self.enabled_subplots else 0,
+        ]
+        height_ratios = [h for h in height_ratios if h > 0]  # Remove zero heights
+
         gs = {"height_ratios": height_ratios}
         self.fig, self.axes = plt.subplots(
-            n_subplots, 1, sharex=True, figsize=(self.width, self.height), gridspec_kw=gs
+            len(height_ratios), 1, sharex=True, figsize=(self.width, self.height), gridspec_kw=gs
         )
-        for i in range(n_subplots):
+        for i in range(len(height_ratios)):
             self.axes[i].set_xlim(60, 120)
 
-        self._plot_waveform(self.axes[0])
-        self.spectrogram_component.plot_spectrogram(self.axes[1])
-        self._plot_similarities(self.axes[2])
-        self._plot_class_probabilities(self.axes[3])
-        self._plot_class_probability_lines(self.axes[4])
+        subplot_index = 0
+        if Subplot.WAVEFORM in self.enabled_subplots:
+            self._plot_waveform(self.axes[subplot_index])
+            subplot_index += 1
+        if Subplot.SPECTROGRAM in self.enabled_subplots:
+            self.spectrogram_component.plot_spectrogram(self.axes[subplot_index])
+            subplot_index += 1
+        if Subplot.SIMILARITIES in self.enabled_subplots:
+            self._plot_similarities(self.axes[subplot_index])
+            subplot_index += 1
+        if Subplot.CLASS_PROBABILITIES in self.enabled_subplots:
+            self._plot_class_probabilities(self.axes[subplot_index])
+            subplot_index += 1
+        if Subplot.CLASS_PROBABILITY_LINES in self.enabled_subplots:
+            self._plot_class_probability_lines(self.axes[subplot_index])
+
+
         for i in range(n_subplots):
             self.axes[i].set_xlim(60, 120)
 
