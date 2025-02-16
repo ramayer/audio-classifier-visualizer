@@ -28,7 +28,7 @@ dependencies = [
   "duckdb",
   "einx",
   "einops>=0.7.0",
-  "librosa",
+  "librosa>=0.11.0rc0",
   "matplotlib",
   "scikit-learn",
   "torch",

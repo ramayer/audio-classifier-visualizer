@@ -10,8 +10,65 @@ import numpy as np
 import torch
 from matplotlib import patches
 
+import ssqueezepy as sqz
+from ssqueezepy.experimental import scale_to_freq
+import matplotlib.pyplot as plt
+import numpy as np
+import matplotlib.pyplot as plt
+#from ssqueezepy import ssq_cwt, ssq_stft
+from ssqueezepy.experimental import scale_to_freq
+from ssqueezepy import utils as ssq_utils
+
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
+
+class _STFTComponent:
+    def __init__(
+            self,
+            n_fft: int = 2048,
+            hop_length: int | None = None,         
+    ):
+        self.n_fft = n_fft
+        self.hop_length = hop_length
+
+    def get_spectrogram(self,y:np.ndarray,sr:int):
+        spec = librosa.stft(y, n_fft=self.n_fft, win_length=self.n_fft, hop_length=self.hop_length)
+        freqs = librosa.fft_frequencies(sr=sr, n_fft=self.n_fft)
+        spectral_power = np.abs(spec) ** 2  # type: ignore
+        return spec, freqs, spectral_power
+    
+class _WaveletComponent:
+
+    def __init__(self,syncrosqueezed = True):
+        self.wavelet = sqz.Wavelet()
+        self.logger = logging.getLogger(__name__)
+        self.syncrosqueezed = syncrosqueezed
+
+    def get_spectrogram(self,y:np.ndarray,sr:int):
+
+        bounds = ssq_utils.cwt_scalebounds(self.wavelet,len(y))
+        self.logger.info(f"scale bounds = {bounds}")
+        # # first element of bounds = the highest frequency
+        # last element is the lowest frequency
+        #scales = ssq_utils.make_scales(len(y),bounds[0],bounds[1]/4,scaletype = "log-piecewise", wavelet = self.wavelet,nv=16)
+        scales = ssq_utils.make_scales(len(y),bounds[0],bounds[1],scaletype = "log-piecewise", wavelet = self.wavelet,nv=32)
+
+        if self.syncrosqueezed:
+            Tx, Wx, ssq_freqs, scales = sqz.ssq_cwt(
+                y, 
+                self.wavelet, 
+                scales=scales, # 'log-piecewise',
+                #cache_wavelet=True,
+                #fs=44100,
+                )
+            spectral_amplitude = Tx
+        else:
+            Wx, scales = sqz.cwt(y, self.wavelet,scales=scales) # 2 seconds
+            spectral_amplitude = Wx
+        freqs_cwt = scale_to_freq(scales, self.wavelet, len(y), fs=sr)
+        spectral_power = np.abs(spectral_amplitude) ** 2
+        spec_in_db = librosa.amplitude_to_db(np.abs(spectral_amplitude),ref=np.max)
+        return spectral_amplitude, freqs_cwt, spectral_power
 
 
 class _SpectrogramComponent:
@@ -26,20 +83,24 @@ class _SpectrogramComponent:
         hop_length: int | None = None,
         colormap: str = "bright",
         log_scale: bool = False,  # noqa: FBT001 FBT002
-        try_per_channel_normalization: bool = True,  # noqa: FBT001 FBT002
+        try_per_channel_normalization: bool = False,  # noqa: FBT001 FBT002
         clip_outliers: bool = True,  # noqa: FBT001 FBT002
         label_boxes: list[Any] | None = None,
         # negative_labels: list[Any] | None = None,
     ):
         self.audio = y
         self.sr = sr
+
+        self.stft_component = _STFTComponent(n_fft,hop_length)
+        self.wavelet_component = _WaveletComponent()
+
         self.class_probabilities = class_probabilities
         self.feature_rate = feature_rate if feature_rate is not None else sr // 320
         self.target_class = target_class
-        self.n_fft = n_fft
-        self.hop_length = hop_length
+        #self.n_fft = n_fft
+        #self.hop_length = hop_length
         self.colormap = colormap
-        self.log_scale = log_scale
+        self.log_scale = log_scale  # TODO - deprecate this
         self.try_per_channel_normalization = try_per_channel_normalization
         self.clip_outliers = clip_outliers
 
@@ -50,9 +111,11 @@ class _SpectrogramComponent:
         self.dissimilarity_scores = 1 - self.similarity_scores  # class_probabilities.cpu()[:, 0]
 
         self.duration = self.audio.shape[0] / self.sr
-        self.spec = librosa.stft(self.audio, n_fft=self.n_fft, win_length=self.n_fft, hop_length=self.hop_length)
-        self.freqs = librosa.fft_frequencies(sr=self.sr, n_fft=self.n_fft)
-        self.spectral_power = np.abs(self.spec) ** 2  # type: ignore
+
+        #self.spec = librosa.stft(self.audio, n_fft=self.n_fft, win_length=self.n_fft, hop_length=self.hop_length)
+        #self.freqs = librosa.fft_frequencies(sr=self.sr, n_fft=self.n_fft)
+        #self.spectral_power = np.abs(self.spec) ** 2  
+
         # This component shouldn't care much about absolute times, except for adding labels
         self.start_time = 0
         self.end_time = self.audio.shape[0] / self.sr
@@ -181,9 +244,45 @@ class _SpectrogramComponent:
         blueness[blueness < 0] = 0
         return redness, greenness, blueness
 
+    def _ticks(self, xticks, yticks, ax):
+        # from ssqueezepy
+        def fmt(ticks):
+            if all(isinstance(h, str) for h in ticks):
+                return "%s"
+            return ("%.d" if all(float(h).is_integer() for h in ticks) else
+                    "%.2f")
+
+        if yticks is not None:
+            if not hasattr(yticks, '__len__') and not yticks:
+                ax.set_yticks([])
+            else:
+                idxs = np.linspace(0, len(yticks) - 1, 8).astype('int32')
+                yt = [fmt(yticks) % h for h in np.asarray(yticks)[idxs]]
+                ax.set_yticks(idxs)
+                ax.set_yticklabels(yt)
+        if xticks is not None:
+            if not hasattr(xticks, '__len__') and not xticks:
+                ax.set_xticks([])
+            else:
+                idxs = np.linspace(0, len(xticks) - 1, 8).astype('int32')
+                xt = [fmt(xticks) % h for h in np.asarray(xticks)[idxs]]
+                ax.set_xticks(idxs)
+                ax.set_xticklabels(xt)
+
+
     def plot_spectrogram(self, ax: Axes) -> None:
+
+        spec, freqs, spectral_power = self.stft_component.get_spectrogram(self.audio,self.sr)
+
+        spec, freqs, spectral_power = self.wavelet_component.get_spectrogram(self.audio,self.sr)
+        spectral_power = spectral_power[:,::self.stft_component.hop_length//4]
+        spec = spec[:,::self.stft_component.hop_length//4]
+        t = np.linspace(0, self.duration, len(spectral_power))
+        self._ticks(t,freqs,ax)
+        #ax.set_xticks(t)
+
         np_spectral_power = self._normalize_spectral_power(
-            self.spectral_power, self.try_per_channel_normalization, self.clip_outliers
+            spectral_power, self.try_per_channel_normalization, self.clip_outliers
         )
         s_db = librosa.power_to_db(np_spectral_power, ref=np.max)
         # component["similarity"] = self.similarity_scores
@@ -199,8 +298,8 @@ class _SpectrogramComponent:
             normed = (s_db - mn) / (mx - mn)
             s_db_rgb = np.stack((normed, normed, normed), axis=-1)
 
-            stretched_similarity = self.interpolate_1d_tensor(similarity, self.spec.shape[1])
-            stretched_dissimilarity = self.interpolate_1d_tensor(dissimilarity, self.spec.shape[1])
+            stretched_similarity = self.interpolate_1d_tensor(similarity, spec.shape[1])
+            stretched_dissimilarity = self.interpolate_1d_tensor(dissimilarity, spec.shape[1])
 
             redness, greenness, blueness = self._compute_color_channels(
                 stretched_similarity, stretched_dissimilarity, self.colormap
@@ -210,6 +309,17 @@ class _SpectrogramComponent:
             s_db_rgb[:, :, 1] = s_db_rgb[:, :, 1] * greenness
             s_db_rgb[:, :, 2] = s_db_rgb[:, :, 2] * blueness
 
+
+            ax.set_title("Spectrogram (db)")
+            ax.set_ylabel("ylabel")
+            ax.set_xlabel("frame")
+            self._ticks(t,freqs,ax)
+            #im = ax.imshow(s_db, aspect="auto",cmap='magma',extent=[self.start_time, self.end_time, len(freqs),0],)
+            im = ax.imshow(s_db_rgb, aspect="auto",extent=[self.start_time, self.end_time, len(freqs),0],)
+            #fig.colorbar(im, ax=axs)
+            #plt.show(block=False)
+            return
+
             # bailing on librosa?
             if self.log_scale:
                 msg = "Log scale functionality is temporarily broken."
@@ -218,8 +328,9 @@ class _SpectrogramComponent:
                 ax.imshow(
                     s_db_rgb.transpose(0, 1, 2),
                     aspect="auto",
-                    origin="lower",
-                    extent=[self.start_time, self.end_time, 0, self.freqs[-1]],
+                    #origin="lower",
+                    #extent=[self.start_time, self.end_time, 0, freqs[-1]],
+                    extent=[self.start_time, self.end_time, 0,20000],
                 )
             ax.set_ylabel("Hz")
 
