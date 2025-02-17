@@ -4,6 +4,7 @@ import dataclasses
 import logging
 from typing import TYPE_CHECKING, Any
 
+import einx
 import librosa
 import matplotlib.pyplot as plt
 import numpy as np
@@ -22,6 +23,16 @@ from ssqueezepy import utils as ssq_utils
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
 
+from enum import Enum
+
+class Subplot(Enum):
+    WAVEFORM = "waveform"
+    STFT_SPECTROGRAM = "stft_spectrogram"
+    WAVELET_SPECTROGRAM = "wavelet_spectrogram"
+    SIMILARITIES = "similarities"
+    CLASS_PROBABILITIES = "class_probabilities"
+    CLASS_PROBABILITY_LINES = "class_probability_lines"
+
 class _STFTComponent:
     def __init__(
             self,
@@ -39,7 +50,7 @@ class _STFTComponent:
     
 class _WaveletComponent:
 
-    def __init__(self,syncrosqueezed = True):
+    def __init__(self,syncrosqueezed = False):
         self.wavelet = sqz.Wavelet()
         self.logger = logging.getLogger(__name__)
         self.syncrosqueezed = syncrosqueezed
@@ -47,14 +58,14 @@ class _WaveletComponent:
     def get_spectrogram(self,y:np.ndarray,sr:int):
 
         bounds = ssq_utils.cwt_scalebounds(self.wavelet,len(y))
-        self.logger.info(f"scale bounds = {bounds}")
         # # first element of bounds = the highest frequency
         # last element is the lowest frequency
         #scales = ssq_utils.make_scales(len(y),bounds[0],bounds[1]/4,scaletype = "log-piecewise", wavelet = self.wavelet,nv=16)
         scales = ssq_utils.make_scales(len(y),bounds[0],bounds[1],scaletype = "log-piecewise", wavelet = self.wavelet,nv=32)
+        self.logger.warning(f"scale bounds = {bounds} len(scales) = {len(scales)}")
 
         if self.syncrosqueezed:
-            Tx, Wx, ssq_freqs, scales = sqz.ssq_cwt(
+            Tx, Wx, _ssq_freqs, scales = sqz.ssq_cwt(
                 y, 
                 self.wavelet, 
                 scales=scales, # 'log-piecewise',
@@ -65,7 +76,12 @@ class _WaveletComponent:
         else:
             Wx, scales = sqz.cwt(y, self.wavelet,scales=scales) # 2 seconds
             spectral_amplitude = Wx
+
+
         freqs_cwt = scale_to_freq(scales, self.wavelet, len(y), fs=sr)
+        if spectral_amplitude.shape[1] > 2:
+            # emulate something like hop_length of STFTs
+            spectral_amplitude = einx.mean("a (b c) -> a b", spectral_amplitude, c=2)
         spectral_power = np.abs(spectral_amplitude) ** 2
         spec_in_db = librosa.amplitude_to_db(np.abs(spectral_amplitude),ref=np.max)
         return spectral_amplitude, freqs_cwt, spectral_power
@@ -83,7 +99,7 @@ class _SpectrogramComponent:
         hop_length: int | None = None,
         colormap: str = "bright",
         log_scale: bool = False,  # noqa: FBT001 FBT002
-        try_per_channel_normalization: bool = False,  # noqa: FBT001 FBT002
+        try_per_channel_normalization: bool = True,  # noqa: FBT001 FBT002
         clip_outliers: bool = True,  # noqa: FBT001 FBT002
         label_boxes: list[Any] | None = None,
         # negative_labels: list[Any] | None = None,
@@ -184,6 +200,8 @@ class _SpectrogramComponent:
     ) -> np.ndarray:  # FBT001
         if try_per_channel_normalization:
             median_pwr_per_spectral_band = np.median(np_spectral_power, axis=1)
+            # Replace zeros in the median array with 1 to avoid division by zero
+            median_pwr_per_spectral_band[median_pwr_per_spectral_band == 0] = 1
             np_spectral_power = np_spectral_power / median_pwr_per_spectral_band[:, None]
 
         if clip_outliers:
@@ -270,16 +288,19 @@ class _SpectrogramComponent:
                 ax.set_xticklabels(xt)
 
 
-    def plot_spectrogram(self, ax: Axes) -> None:
+    def plot_spectrogram(self, ax: Axes, method = Subplot.STFT_SPECTROGRAM) -> None:
 
-        spec, freqs, spectral_power = self.stft_component.get_spectrogram(self.audio,self.sr)
 
-        spec, freqs, spectral_power = self.wavelet_component.get_spectrogram(self.audio,self.sr)
-        spectral_power = spectral_power[:,::self.stft_component.hop_length//4]
-        spec = spec[:,::self.stft_component.hop_length//4]
-        t = np.linspace(0, self.duration, len(spectral_power))
-        self._ticks(t,freqs,ax)
-        #ax.set_xticks(t)
+        if method == Subplot.STFT_SPECTROGRAM:
+            spec, freqs, spectral_power = self.stft_component.get_spectrogram(self.audio,self.sr)
+
+        elif method == Subplot.WAVELET_SPECTROGRAM:
+            spec, freqs, spectral_power = self.wavelet_component.get_spectrogram(self.audio,self.sr)
+            spectral_power = spectral_power[:,::self.stft_component.hop_length//4]
+            spec = spec[:,::self.stft_component.hop_length//4]
+            t = np.linspace(0, self.duration, len(spectral_power))
+            self._ticks(t,freqs,ax)
+            #ax.set_xticks(t)
 
         np_spectral_power = self._normalize_spectral_power(
             spectral_power, self.try_per_channel_normalization, self.clip_outliers
@@ -310,17 +331,18 @@ class _SpectrogramComponent:
             s_db_rgb[:, :, 2] = s_db_rgb[:, :, 2] * blueness
 
 
-            ax.set_title("Spectrogram (db)")
-            ax.set_ylabel("ylabel")
-            ax.set_xlabel("frame")
-            self._ticks(t,freqs,ax)
-            #im = ax.imshow(s_db, aspect="auto",cmap='magma',extent=[self.start_time, self.end_time, len(freqs),0],)
-            im = ax.imshow(s_db_rgb, aspect="auto",extent=[self.start_time, self.end_time, len(freqs),0],)
-            #fig.colorbar(im, ax=axs)
-            #plt.show(block=False)
-            return
+            if method == Subplot.WAVELET_SPECTROGRAM:
+                #ax.set_title("Spectrogram (db)")
+                ax.set_ylabel("Wavelet band")
+                #ax.set_xlabel("frame")
+                self._ticks(t,freqs,ax)
+                #im = ax.imshow(s_db, aspect="auto",cmap='magma',extent=[self.start_time, self.end_time, len(freqs),0],)
+                im = ax.imshow(s_db_rgb, aspect="auto",extent=[self.start_time, self.end_time, len(freqs),0],)
+                #fig.colorbar(im, ax=axs)
+                #plt.show(block=False)
+                #return
 
-            # bailing on librosa?
+            # STFT
             if self.log_scale:
                 msg = "Log scale functionality is temporarily broken."
                 raise NotImplementedError(msg)
@@ -328,11 +350,10 @@ class _SpectrogramComponent:
                 ax.imshow(
                     s_db_rgb.transpose(0, 1, 2),
                     aspect="auto",
-                    #origin="lower",
-                    #extent=[self.start_time, self.end_time, 0, freqs[-1]],
-                    extent=[self.start_time, self.end_time, 0,20000],
+                    origin="lower",
+                    extent=[self.start_time, self.end_time, 0, freqs[-1]],
                 )
-            ax.set_ylabel("Hz")
+                ax.set_ylabel("STFT freq")
 
             # librosa.display.specshow(
             #     s_db_rgb[:, :],
@@ -362,14 +383,6 @@ class _SpectrogramComponent:
         if self.label_boxes:
             self.add_annotation_boxes(self.label_boxes, self.start_time, self.end_time, ax, offset=0.1, color=(0, 1, 1))
 
-from enum import Enum
-
-class Subplot(Enum):
-    WAVEFORM = "waveform"
-    SPECTROGRAM = "spectrogram"
-    SIMILARITIES = "similarities"
-    CLASS_PROBABILITIES = "class_probabilities"
-    CLASS_PROBABILITY_LINES = "class_probability_lines"
 
 class AudioFileVisualizer:
     def __init__(
@@ -423,7 +436,8 @@ class AudioFileVisualizer:
         )
 
         self.enabled_subplots = {Subplot.WAVEFORM, 
-                                 Subplot.SPECTROGRAM, 
+                                 Subplot.STFT_SPECTROGRAM, 
+                                 Subplot.WAVELET_SPECTROGRAM, 
                                  Subplot.SIMILARITIES, 
                                  Subplot.CLASS_PROBABILITIES, 
                                  #Subplot.CLASS_PROBABILITY_LINES,
@@ -553,7 +567,8 @@ class AudioFileVisualizer:
         n_subplots = len(self.enabled_subplots)
         height_ratios = [
             1 if Subplot.WAVEFORM in self.enabled_subplots else 0,
-            3 if Subplot.SPECTROGRAM in self.enabled_subplots else 0,
+            3 if Subplot.STFT_SPECTROGRAM in self.enabled_subplots else 0,
+            3 if Subplot.WAVELET_SPECTROGRAM in self.enabled_subplots else 0,
             1 if Subplot.SIMILARITIES in self.enabled_subplots else 0,
             1 if Subplot.CLASS_PROBABILITIES in self.enabled_subplots else 0,
             1 if Subplot.CLASS_PROBABILITY_LINES in self.enabled_subplots else 0,
@@ -571,8 +586,11 @@ class AudioFileVisualizer:
         if Subplot.WAVEFORM in self.enabled_subplots:
             self._plot_waveform(self.axes[subplot_index])
             subplot_index += 1
-        if Subplot.SPECTROGRAM in self.enabled_subplots:
+        if Subplot.STFT_SPECTROGRAM in self.enabled_subplots:
             self.spectrogram_component.plot_spectrogram(self.axes[subplot_index])
+            subplot_index += 1
+        if Subplot.WAVELET_SPECTROGRAM in self.enabled_subplots:
+            self.spectrogram_component.plot_spectrogram(self.axes[subplot_index], method=Subplot.WAVELET_SPECTROGRAM)
             subplot_index += 1
         if Subplot.SIMILARITIES in self.enabled_subplots:
             self._plot_similarities(self.axes[subplot_index])

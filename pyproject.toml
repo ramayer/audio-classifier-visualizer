@@ -49,6 +49,9 @@ Source = "https://github.com/Ron M/audio-classifier-visualizer"
 test = [
   "elephant-rumble-inference @ git+https://github.com/ramayer/elephant-rumble-inference@v0.9.0-rc1",
 ]
+cuda12 = [
+  "cupy-cuda12x"
+]
 
 [tool.hatch.envs.hatch-test]
 features = [
