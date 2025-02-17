@@ -55,6 +55,59 @@ class _WaveletComponent:
         self.logger = logging.getLogger(__name__)
         self.syncrosqueezed = syncrosqueezed
 
+    def get_bounds_scales_and_freqs(self,y,sr,wavelet=None):
+        size = 65536 # len(y)
+        wavelet = wavelet or self.wavelet
+        bounds = ssq_utils.cwt_scalebounds(wavelet,size)
+        scales = ssq_utils.make_scales(size,bounds[0],bounds[1],scaletype = "log-piecewise", wavelet = wavelet)#,nv=32)
+        freqs = scale_to_freq(scales, self.wavelet, size, fs=sr)
+        return bounds, scales, freqs
+
+
+    def cwt_in_chunks(self, y:np.ndarray, sr:int, wavelet = None, chunk_size=65536, overlap=512):
+        wavelet = wavelet or self.wavelet
+        bounds, scales, freqs = self.get_bounds_scales_and_freqs(y,sr,wavelet)
+
+        padded_audio = np.pad(y, (overlap, overlap), mode="constant")
+        results = []
+        for start in range(0, len(padded_audio) - 2 * overlap, chunk_size):
+            end = start + chunk_size + 2 * overlap
+            chunk = padded_audio[start:end]
+            Wx, scales = sqz.cwt(chunk, wavelet,scales=scales)
+            Wx = Wx[:, overlap:-overlap]
+            results.append(Wx)
+        spectral_amplitude = np.concatenate(results, axis=1)
+        spectral_power = np.abs(spectral_amplitude) ** 2
+
+        return spectral_amplitude, freqs, spectral_power
+
+    def ssq_cwt_in_chunks(self, y:np.ndarray, sr:int, wavelet = None, chunk_size=65536, overlap=512):
+        wavelet = wavelet or self.wavelet
+        bounds, scales, freqs = self.get_bounds_scales_and_freqs(y,sr,wavelet)
+
+        padded_audio = np.pad(y, (overlap, overlap), mode="constant")
+        results = []
+        for start in range(0, len(padded_audio) - 2 * overlap, chunk_size):
+            end = start + chunk_size + 2 * overlap
+            chunk = padded_audio[start:end]
+            Tx, _Wx, _ssq_freqs, _scales = sqz.ssq_cwt(
+                chunk, 
+                self.wavelet, 
+                scales=scales, # 'log-piecewise',
+                #cache_wavelet=True,
+                #fs=44100,
+            )
+            if isinstance(Tx,torch.Tensor):
+                Tx = Tx.cpu()
+            results.append(Tx[:, overlap:-overlap])
+        
+
+        print("type is",type(results[0]))
+        spectral_amplitude = np.concatenate(results, axis=1)
+        spectral_power = np.abs(spectral_amplitude) ** 2
+
+        return spectral_amplitude, freqs, spectral_power
+
     def get_spectrogram(self,y:np.ndarray,sr:int):
 
         bounds = ssq_utils.cwt_scalebounds(self.wavelet,len(y))
@@ -98,8 +151,8 @@ class _SpectrogramComponent:
         n_fft: int = 2048,
         hop_length: int | None = None,
         colormap: str = "bright",
-        log_scale: bool = False,  # noqa: FBT001 FBT002
-        try_per_channel_normalization: bool = True,  # noqa: FBT001 FBT002
+        #log_scale: bool = False,  # noqa: FBT001 FBT002
+        try_per_channel_normalization: bool = False,  # noqa: FBT001 FBT002
         clip_outliers: bool = True,  # noqa: FBT001 FBT002
         label_boxes: list[Any] | None = None,
         # negative_labels: list[Any] | None = None,
@@ -116,7 +169,7 @@ class _SpectrogramComponent:
         #self.n_fft = n_fft
         #self.hop_length = hop_length
         self.colormap = colormap
-        self.log_scale = log_scale  # TODO - deprecate this
+        #self.log_scale = log_scale  # TODO - deprecate this
         self.try_per_channel_normalization = try_per_channel_normalization
         self.clip_outliers = clip_outliers
 
@@ -295,7 +348,10 @@ class _SpectrogramComponent:
             spec, freqs, spectral_power = self.stft_component.get_spectrogram(self.audio,self.sr)
 
         elif method == Subplot.WAVELET_SPECTROGRAM:
-            spec, freqs, spectral_power = self.wavelet_component.get_spectrogram(self.audio,self.sr)
+            #spec, freqs, spectral_power = self.wavelet_component.get_spectrogram(self.audio,self.sr)
+
+            spec,freqs,spectral_power =  self.wavelet_component.ssq_cwt_in_chunks(self.audio, self.sr)
+
             spectral_power = spectral_power[:,::self.stft_component.hop_length//4]
             spec = spec[:,::self.stft_component.hop_length//4]
             t = np.linspace(0, self.duration, len(spectral_power))
@@ -343,10 +399,7 @@ class _SpectrogramComponent:
                 #return
 
             # STFT
-            if self.log_scale:
-                msg = "Log scale functionality is temporarily broken."
-                raise NotImplementedError(msg)
-            else:  # noqa: RET506
+            if method == Subplot.STFT_SPECTROGRAM:
                 ax.imshow(
                     s_db_rgb.transpose(0, 1, 2),
                     aspect="auto",
@@ -372,16 +425,23 @@ class _SpectrogramComponent:
                 n_fft=self.n_fft,
                 hop_length=self.hop_length,
                 x_axis="time",
-                y_axis="log" if self.log_scale else "linear",
+                y_axis="linear",
                 y_coords=self.freqs,
                 ax=ax,
             )
         # ax.set_xlabel("")
+        
 
         # ax.set_xticks(np.arange(0, self.duration + 1, 30))
 
-        if self.label_boxes:
-            self.add_annotation_boxes(self.label_boxes, self.start_time, self.end_time, ax, offset=0.1, color=(0, 1, 1))
+        if self.label_boxes and method == Subplot.STFT_SPECTROGRAM:
+            # TODO: find the write positions for the labels in the wavelet image
+            self.add_annotation_boxes(
+                self.label_boxes, 
+                self.start_time, self.end_time, 
+                ax, 
+                offset=0.1, 
+                color=(0, 1, 1))
 
 
 class AudioFileVisualizer:
