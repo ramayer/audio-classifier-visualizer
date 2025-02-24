@@ -179,6 +179,7 @@ class _SpectrogramComponent:
         axarr: Axes,
         offset: float = 0.2,
         color: tuple[float, float, float] = (0.0, 1.0, 1.0),
+        vert_offset: int = 0,
     ) -> None:
         """Add annotation boxes to the visualization.
             Cool
@@ -211,7 +212,7 @@ class _SpectrogramComponent:
 
                 # Add label below the box with a dark background
                 # TODO: the offset of the label should depend on the timescale being shown
-                label_x, label_y = (xy[0] + width, xy[1] + height * 1.2)  # Adjust the y position as needed
+                label_x, label_y = (xy[0] + width, xy[1] + height + vert_offset)  # Adjust the y position as needed
                 bbox_props = {"boxstyle": "round,pad=0.3", "edgecolor": edgecolor, "facecolor": "black", "alpha": 0.7}
                 axarr.text(
                     label_x, label_y, row.notes, ha="right", va="bottom", fontsize=12, color="white", bbox=bbox_props
@@ -316,20 +317,23 @@ class _SpectrogramComponent:
 
         elif method == Subplot.WAVELET_SPECTROGRAM:
             spec, freqs, spectral_power = self.wavelet_component.ssq_cwt_in_chunks(self.audio, self.sr)
-            # spec,freqs,spectral_power =  self.wavelet_component.cwt_in_chunks(self.audio, self.sr)
+            # spec, freqs, spectral_power = self.wavelet_component.cwt_in_chunks(self.audio, self.sr)
 
-            decimation_stride = self.stft_component.hop_length // 4
-
-            spectral_power = einx.mean("a (b c) -> a b", spectral_power, c=decimation_stride)
-            # spectral_power = spectral_power[:, :: decimation_stride]
+            decimation_stride = self.stft_component.hop_length
+            mean_value = np.mean(spectral_power)  # TODO: consider row means
+            padding_length = (decimation_stride - spectral_power.shape[1] % decimation_stride) % decimation_stride
+            padded_spectral_power = np.pad(
+                spectral_power, ((0, 0), (0, padding_length)), mode="constant", constant_values=mean_value
+            )
+            spectral_power = einx.mean("a (b c) -> a b", padded_spectral_power, c=decimation_stride)
+            # spectral_power = spectral_power[:, ::decimation_stride]
             spec = spec[:, ::decimation_stride]
 
             t = np.linspace(0, self.duration, len(spectral_power))
             self._ticks(t, freqs, ax)
 
-        np_spectral_power = self._normalize_spectral_power(
-            spectral_power, self.try_per_channel_normalization, self.clip_outliers
-        )
+        try_pcn = (method == Subplot.STFT_SPECTROGRAM) and self.try_per_channel_normalization
+        np_spectral_power = self._normalize_spectral_power(spectral_power, try_pcn, self.clip_outliers)
         s_db = librosa.power_to_db(np_spectral_power, ref=np.max)
 
         if self.similarity_scores is not None and self.dissimilarity_scores is not None:
@@ -386,7 +390,16 @@ class _SpectrogramComponent:
 
         if self.label_boxes and method == Subplot.STFT_SPECTROGRAM:
             # TODO: find the write positions for the labels in the wavelet image
-            self.add_annotation_boxes(self.label_boxes, self.start_time, self.end_time, ax, offset=0.1, color=(0, 1, 1))
+            vert_offset = (freqs[-1] - freqs[0]) // 25
+            self.add_annotation_boxes(
+                self.label_boxes,
+                self.start_time,
+                self.end_time,
+                ax,
+                offset=0.1,
+                color=(0, 1, 1),
+                vert_offset=vert_offset,
+            )
 
 
 class AudioFileVisualizer:
@@ -439,6 +452,7 @@ class AudioFileVisualizer:
             hop_length=n_fft // 4,
             label_boxes=label_boxes,
             freq_range_of_interest=freq_range_of_interest,
+            try_per_channel_normalization=True,
         )
 
         self.enabled_subplots = {
