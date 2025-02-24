@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+import einx
 import librosa
 import matplotlib.pyplot as plt
 import numpy as np
@@ -30,35 +31,51 @@ class Subplot(Enum):
 
 
 class _STFTComponent:
-    def __init__(
-        self,
-        n_fft: int = 2048,
-        hop_length: int | None = None,
-    ):
+    def __init__(self, n_fft: int = 2048, hop_length: int | None = None, freq_range_of_interest=(100, 1200)):
         self.n_fft = n_fft
         self.hop_length = hop_length
+        self.freq_range_of_interest = freq_range_of_interest
 
     def get_spectrogram(self, y: np.ndarray, sr: int):
         spec = librosa.stft(y, n_fft=self.n_fft, win_length=self.n_fft, hop_length=self.hop_length)
         freqs = librosa.fft_frequencies(sr=sr, n_fft=self.n_fft)
         spectral_power = np.abs(spec) ** 2  # type: ignore
+
+        if self.freq_range_of_interest:
+            lo_freq = self.freq_range_of_interest[0]
+            hi_freq = self.freq_range_of_interest[1]
+            freq_filter = (freqs >= lo_freq) & (freqs <= hi_freq)
+            freqs = freqs[freq_filter]
+            spec = spec[freq_filter]
+            spectral_power = spectral_power[freq_filter]
+
         return spec, freqs, spectral_power
 
 
 class _WaveletComponent:
-    def __init__(self, chunk_size=65536):
+    def __init__(self, chunk_size=65536, freq_range_of_interest=(100, 1200)):
         self.wavelet = sqz.Wavelet()
         self.logger = logging.getLogger(__name__)
         self.chunk_size = chunk_size
+        self.freq_range_of_interest = freq_range_of_interest
 
     def get_bounds_scales_and_freqs(self, y, sr, wavelet=None):
-        scale_size = min([self.chunk_size, len(y), sr * 4])
+        # scale_size = min([self.chunk_size, len(y), sr * 4])
+        scale_size = min([self.chunk_size, len(y), sr * 10])
         wavelet = wavelet or self.wavelet
         bounds = ssq_utils.cwt_scalebounds(wavelet, scale_size)
         scales = ssq_utils.make_scales(
             scale_size, bounds[0], bounds[1], scaletype="log-piecewise", wavelet=wavelet
         )  # ,nv=32)
         freqs = scale_to_freq(scales, self.wavelet, scale_size, fs=sr)
+
+        if self.freq_range_of_interest:
+            lo_freq = self.freq_range_of_interest[0]
+            hi_freq = self.freq_range_of_interest[1]
+            freq_filter = (freqs >= lo_freq) & (freqs <= hi_freq)
+            freqs = freqs[freq_filter]
+            scales = scales[freq_filter]
+
         return bounds, scales, freqs
 
     def cwt_in_chunks(self, y: np.ndarray, sr: int, wavelet=None, overlap=512):
@@ -104,36 +121,6 @@ class _WaveletComponent:
 
         return spectral_amplitude, freqs, spectral_power
 
-    # def get_spectrogram(self,y:np.ndarray,sr:int):
-
-    #     bounds = ssq_utils.cwt_scalebounds(self.wavelet,len(y))
-    #     # # first element of bounds = the highest frequency
-    #     # last element is the lowest frequency
-    #     #scales = ssq_utils.make_scales(len(y),bounds[0],bounds[1]/4,scaletype = "log-piecewise", wavelet = self.wavelet,nv=16)
-    #     scales = ssq_utils.make_scales(len(y),bounds[0],bounds[1],scaletype = "log-piecewise", wavelet = self.wavelet,nv=32)
-    #     self.logger.warning(f"scale bounds = {bounds} len(scales) = {len(scales)}")
-
-    #     if self.syncrosqueezed:
-    #         Tx, Wx, _ssq_freqs, scales = sqz.ssq_cwt(
-    #             y,
-    #             self.wavelet,
-    #             scales=scales, # 'log-piecewise',
-    #             #cache_wavelet=True,
-    #             #fs=44100,
-    #             )
-    #         spectral_amplitude = Tx
-    #     else:
-    #         Wx, scales = sqz.cwt(y, self.wavelet,scales=scales) # 2 seconds
-    #         spectral_amplitude = Wx
-
-    #     freqs_cwt = scale_to_freq(scales, self.wavelet, len(y), fs=sr)
-    #     if spectral_amplitude.shape[1] > 2:
-    #         # emulate something like hop_length of STFTs
-    #         spectral_amplitude = einx.mean("a (b c) -> a b", spectral_amplitude, c=2)
-    #     spectral_power = np.abs(spectral_amplitude) ** 2
-    #     spec_in_db = librosa.amplitude_to_db(np.abs(spectral_amplitude),ref=np.max)
-    #     return spectral_amplitude, freqs_cwt, spectral_power
-
 
 class _SpectrogramComponent:
     def __init__(
@@ -149,12 +136,13 @@ class _SpectrogramComponent:
         try_per_channel_normalization: bool = False,  # noqa: FBT001 FBT002
         clip_outliers: bool = True,  # noqa: FBT001 FBT002
         label_boxes: list[Any] | None = None,
+        freq_range_of_interest=None,
     ):
         self.audio = y
         self.sr = sr
 
-        self.stft_component = _STFTComponent(n_fft, hop_length)
-        self.wavelet_component = _WaveletComponent()
+        self.stft_component = _STFTComponent(n_fft, hop_length, freq_range_of_interest=freq_range_of_interest)
+        self.wavelet_component = _WaveletComponent(freq_range_of_interest=freq_range_of_interest)
 
         self.class_probabilities = class_probabilities
         self.feature_rate = feature_rate if feature_rate is not None else sr // 320
@@ -303,7 +291,7 @@ class _SpectrogramComponent:
         def fmt(ticks):
             if all(isinstance(h, str) for h in ticks):
                 return "%s"
-            return "%.d" if all(float(h).is_integer() for h in ticks) else "%.2f"
+            return "%.d" if all(float(h).is_integer() for h in ticks) else "%.3g"
 
         if yticks is not None:
             if not hasattr(yticks, "__len__") and not yticks:
@@ -330,8 +318,12 @@ class _SpectrogramComponent:
             spec, freqs, spectral_power = self.wavelet_component.ssq_cwt_in_chunks(self.audio, self.sr)
             # spec,freqs,spectral_power =  self.wavelet_component.cwt_in_chunks(self.audio, self.sr)
 
-            spectral_power = spectral_power[:, :: self.stft_component.hop_length // 4]
-            spec = spec[:, :: self.stft_component.hop_length // 4]
+            decimation_stride = self.stft_component.hop_length // 4
+
+            spectral_power = einx.mean("a (b c) -> a b", spectral_power, c=decimation_stride)
+            # spectral_power = spectral_power[:, :: decimation_stride]
+            spec = spec[:, ::decimation_stride]
+
             t = np.linspace(0, self.duration, len(spectral_power))
             self._ticks(t, freqs, ax)
 
@@ -376,7 +368,7 @@ class _SpectrogramComponent:
                     s_db_rgb.transpose(0, 1, 2),
                     aspect="auto",
                     origin="lower",
-                    extent=[self.start_time, self.end_time, 0, freqs[-1]],
+                    extent=[self.start_time, self.end_time, freqs[0], freqs[-1]],
                 )
                 ax.set_ylabel("STFT Hz")
 
@@ -412,6 +404,7 @@ class AudioFileVisualizer:
         label_boxes: list[Any] | None = None,
         target_class: int | None = None,
         resample_to_sr: int | None = None,
+        freq_range_of_interest=None,
     ) -> None:
         self.logger = logging.getLogger(__name__)
 
@@ -445,6 +438,7 @@ class AudioFileVisualizer:
             n_fft=n_fft,
             hop_length=n_fft // 4,
             label_boxes=label_boxes,
+            freq_range_of_interest=freq_range_of_interest,
         )
 
         self.enabled_subplots = {
