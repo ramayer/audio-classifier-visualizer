@@ -517,7 +517,7 @@ class AudioFileVisualizer:
         ax.stackplot(time_axis, probs.T, labels=labels)
         ax.legend(loc="upper right")
         # ax.set_xlim(0, self.duration)
-        #ax.set_ylim(0, 1)
+        # ax.set_ylim(0, 1)
         ax.set_ylabel("CLS")
         # ax.set_xticks(np.arange(0, self.duration + 1, 30))
 
@@ -532,7 +532,7 @@ class AudioFileVisualizer:
 
         ax.legend(loc="upper right")
         # ax.set_xlim(0, self.duration)
-        #ax.set_ylim(0, 1)
+        # ax.set_ylim(0, 1)
         ax.set_ylabel("CLS")
         # ax.set_xticks(np.arange(0, self.duration + 1, 30))
 
