@@ -7,12 +7,14 @@
 from audio_classifier_visualizer.audio_file_processor import AudioFileProcessor
 from audio_classifier_visualizer.audio_file_visualizer import AudioFileVisualizer
 from audio_classifier_visualizer.raven_file_helper import RavenFileHelper, RavenLabel
+from audio_classifier_visualizer.audioset_helper import AudioSetHelper
 
 __all__ = [
     # "AvesTorchaudioWrapper",
     # "ElephantRumbleClassifier",
     "AudioFileProcessor",
     "AudioFileVisualizer",
+    "AudioSetHelper",
     "RavenFileHelper",
     "RavenLabel",
 ]
