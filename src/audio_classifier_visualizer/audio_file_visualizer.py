@@ -292,7 +292,7 @@ class _SpectrogramComponent:
         def fmt(ticks):
             if all(isinstance(h, str) for h in ticks):
                 return "%s"
-            return "%.d" if all(float(h).is_integer() for h in ticks) else "%.3g"
+            return "%.d" if all(float(h).is_integer() for h in ticks) else "%.4g"
 
         if yticks is not None:
             if not hasattr(yticks, "__len__") and not yticks:
@@ -339,13 +339,24 @@ class _SpectrogramComponent:
         if self.similarity_scores is not None and self.dissimilarity_scores is not None:
             start_index = int(self.time_to_score_index(self.start_time))
             end_index = int(self.time_to_score_index(self.end_time))
+
             similarity = self.similarity_scores[start_index:end_index].clone()
             dissimilarity = self.dissimilarity_scores[start_index:end_index].clone()
+
+            if similarity.shape[0] < end_index - start_index:
+                padding_needed = end_index - start_index - similarity.shape[0]
+                similarity = np.pad(similarity, (0, padding_needed), mode="constant", constant_values=0)
+                dissimilarity = np.pad(dissimilarity, (0, padding_needed), mode="constant", constant_values=0)
+                similarity = torch.tensor(similarity)
+                dissimilarity = torch.tensor(dissimilarity)
 
             mx, mn = np.max(s_db), np.min(s_db)
             normed = (s_db - mn) / (mx - mn)
             s_db_rgb = np.stack((normed, normed, normed), axis=-1)
 
+            spec.shape[1]
+
+            # This says how many samples it will create, but not the start or end.
             stretched_similarity = self.interpolate_1d_tensor(similarity, spec.shape[1])
             stretched_dissimilarity = self.interpolate_1d_tensor(dissimilarity, spec.shape[1])
 
@@ -515,10 +526,11 @@ class AudioFileVisualizer:
 
         time_axis = np.arange(probs.shape[0]) / self.feature_rate + 1 / self.feature_rate / 2
         ax.stackplot(time_axis, probs.T, labels=labels)
-        ax.legend(loc="upper right")
+        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.25), ncol=4, prop={"size": 8})
+        plt.subplots_adjust(bottom=0.5)
         # ax.set_xlim(0, self.duration)
         # ax.set_ylim(0, 1)
-        ax.set_ylabel("CLS")
+        ax.set_ylabel("Cls Prob")
         # ax.set_xticks(np.arange(0, self.duration + 1, 30))
 
     def _plot_class_probability_lines(self, ax: Axes) -> None:
@@ -533,7 +545,7 @@ class AudioFileVisualizer:
         ax.legend(loc="upper right")
         # ax.set_xlim(0, self.duration)
         # ax.set_ylim(0, 1)
-        ax.set_ylabel("CLS")
+        ax.set_ylabel("Target Cls")
         # ax.set_xticks(np.arange(0, self.duration + 1, 30))
 
     def _get_tick_interval(self, duration: float) -> float:
@@ -550,7 +562,7 @@ class AudioFileVisualizer:
             3 if Subplot.STFT_SPECTROGRAM in self.enabled_subplots else 0,
             3 if Subplot.WAVELET_SPECTROGRAM in self.enabled_subplots else 0,
             1 if Subplot.SIMILARITIES in self.enabled_subplots else 0,
-            1 if Subplot.CLASS_PROBABILITIES in self.enabled_subplots else 0,
+            2 if Subplot.CLASS_PROBABILITIES in self.enabled_subplots else 0,
             1 if Subplot.CLASS_PROBABILITY_LINES in self.enabled_subplots else 0,
         ]
         height_ratios = [h for h in height_ratios if h > 0]  # Remove zero heights
@@ -597,9 +609,14 @@ class AudioFileVisualizer:
 
             def format_time(x, _pos):
                 hours = int(x // 60 // 60)
-                minutes = int(x // 60)
+                minutes = int(x // 60 % 60)
                 seconds = x % 60
-                return f"{minutes}:{seconds:02}" if hours < 1 else f"{hours}:{minutes}:{seconds}"
+
+                # Check if seconds is an integer
+                if seconds == int(seconds):
+                    return f"{minutes:02}:{int(seconds):02}" if hours < 1 else f"{hours}:{minutes:02}:{int(seconds):02}"
+                else:  # noqa: RET505 , easier to read with the else
+                    return f"{minutes:02}:{seconds:06.3f}" if hours < 1 else f"{hours}:{minutes:02}:{seconds:06.3f}"
 
             ax.xaxis.set_major_formatter(FuncFormatter(format_time))
 
