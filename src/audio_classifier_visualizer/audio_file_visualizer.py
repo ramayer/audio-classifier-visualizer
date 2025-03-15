@@ -102,6 +102,7 @@ class _WaveletComponent:
 
         padded_audio = np.pad(y, (overlap, overlap), mode="constant")
         results = []
+        self.logger.debug("... processing chunks")
         for start in range(0, len(padded_audio) - 2 * overlap, self.chunk_size):
             end = start + self.chunk_size + 2 * overlap
             chunk = padded_audio[start:end]
@@ -115,6 +116,7 @@ class _WaveletComponent:
             if isinstance(tx, torch.Tensor):
                 tx = tx.cpu()
             results.append(tx[:, overlap:-overlap])
+        self.logger.debug("... concatenating chunks")
 
         spectral_amplitude = np.concatenate(results, axis=1)
         spectral_power = np.abs(spectral_amplitude) ** 2
@@ -193,6 +195,7 @@ class _SpectrogramComponent:
         """
         for row in labels:
             # bt, et, lf, hf, dur, fn, tags, notes, tag1, tag2, score, raven_file = dataclasses.astuple(row)
+            # logging.getLogger(__name__).debug(f"{row}, {patch_start} {patch_end}") # labels can be drawn outside of display
             if row.et < patch_start or row.bt > patch_end:
                 continue
             xy = (row.bt - patch_start - offset, row.lf - 5)
@@ -318,7 +321,7 @@ class _SpectrogramComponent:
         elif method == Subplot.WAVELET_SPECTROGRAM:
             spec, freqs, spectral_power = self.wavelet_component.ssq_cwt_in_chunks(self.audio, self.sr)
             # spec, freqs, spectral_power = self.wavelet_component.cwt_in_chunks(self.audio, self.sr)
-
+            logging.getLogger(__name__).debug("... Done processing cwt")
             decimation_stride = self.stft_component.hop_length
             mean_value = np.mean(spectral_power)  # TODO: consider row means
             padding_length = (decimation_stride - spectral_power.shape[1] % decimation_stride) % decimation_stride
@@ -328,6 +331,7 @@ class _SpectrogramComponent:
             spectral_power = einx.mean("a (b c) -> a b", padded_spectral_power, c=decimation_stride)
             # spectral_power = spectral_power[:, ::decimation_stride]
             spec = spec[:, ::decimation_stride]
+            logging.getLogger(__name__).debug("... Done decimating cwt")
 
             t = np.linspace(0, self.duration, len(spectral_power))
             self._ticks(t, freqs, ax)
@@ -428,10 +432,11 @@ class AudioFileVisualizer:
         label_boxes: list[Any] | None = None,
         target_class: int | None = None,
         resample_to_sr: int | None = None,
-        freq_range_of_interest=None,
+        freq_range_of_interest: tuple[float, float] | None = None,
+        display_time_offset: int = 0,
     ) -> None:
         self.logger = logging.getLogger(__name__)
-
+        self.logger.debug("Intialzed logging")
         if audio_file:
             self.audio, self.sr = librosa.load(
                 audio_file, sr=sr, offset=start_time, duration=None if end_time is None else end_time - start_time
@@ -444,6 +449,7 @@ class AudioFileVisualizer:
             self.sr = resample_to_sr
 
         self.audio_duration = self.audio.shape[0] / self.sr
+        self.display_time_offset = display_time_offset
 
         # Default for AVES/HuBERT embeddings
         # from https://arxiv.org/pdf/2106.07447
@@ -453,6 +459,8 @@ class AudioFileVisualizer:
         self.target_class = target_class
 
         # Compute spectral features
+        self.logger.debug("constructing spectrogram")
+
         self.spectrogram_component = _SpectrogramComponent(
             y=self.audio,
             sr=self.sr,
@@ -474,6 +482,7 @@ class AudioFileVisualizer:
             Subplot.CLASS_PROBABILITIES,
             # Subplot.CLASS_PROBABILITY_LINES,
         }
+        self.logger.debug("constructed")
 
     def time_to_score_index(self, t: float) -> int:
         return t * self.feature_rate
@@ -576,21 +585,27 @@ class AudioFileVisualizer:
 
         subplot_index = 0
         if Subplot.WAVEFORM in self.enabled_subplots:
+            self.logger.debug("WAVEFORM")
             self._plot_waveform(self.axes[subplot_index])
             subplot_index += 1
         if Subplot.STFT_SPECTROGRAM in self.enabled_subplots:
+            self.logger.debug("STFT_SPECTROGRAM")
             self.spectrogram_component.plot_spectrogram(self.axes[subplot_index])
             subplot_index += 1
         if Subplot.WAVELET_SPECTROGRAM in self.enabled_subplots:
+            self.logger.debug("WAVELET_SPECTROGRAM")
             self.spectrogram_component.plot_spectrogram(self.axes[subplot_index], method=Subplot.WAVELET_SPECTROGRAM)
             subplot_index += 1
         if Subplot.SIMILARITIES in self.enabled_subplots:
+            self.logger.debug("SIMILARITIES")
             self._plot_similarities(self.axes[subplot_index])
             subplot_index += 1
         if Subplot.CLASS_PROBABILITIES in self.enabled_subplots:
+            self.logger.debug("CLASS_PROBABILITIES")
             self._plot_class_probabilities(self.axes[subplot_index])
             subplot_index += 1
         if Subplot.CLASS_PROBABILITY_LINES in self.enabled_subplots:
+            self.logger.debug("CLASS_PROBABILITY_LINES")
             self._plot_class_probability_lines(self.axes[subplot_index])
 
         for i in range(n_subplots):
@@ -600,23 +615,25 @@ class AudioFileVisualizer:
             ax.tick_params(axis="x", which="both", bottom=False, top=False, labelbottom=False)
             # ax.set_xlim(self.start_time, self.end_time)
 
+        self.logger.debug("axes formatting")
+        display_time_offset = self.display_time_offset
+
+        def format_time(x, _pos):
+            x += display_time_offset  # needs to stay out of the loop because of Ruff:B023
+            hours = int(x // 60 // 60)
+            minutes = int(x // 60 % 60)
+            seconds = x % 60
+            if seconds == int(seconds):
+                return f"{minutes:02}:{int(seconds):02}" if hours < 1 else f"{hours}:{minutes:02}:{int(seconds):02}"
+            else:  # noqa: RET505 , easier to read with the else
+                return f"{minutes:02}:{seconds:06.3f}" if hours < 1 else f"{hours}:{minutes:02}:{seconds:06.3f}"
+
         for ax in self.axes[-1:]:
             ax.tick_params(axis="x", which="both", bottom=True, top=False, labelbottom=True)
             ax.set_xlabel("Time")
             tick_interval = self._get_tick_interval(self.end_time - self.start_time)
             ax.set_xticks(np.arange(self.start_time % tick_interval, self.end_time + 1, tick_interval))
             from matplotlib.ticker import FuncFormatter
-
-            def format_time(x, _pos):
-                hours = int(x // 60 // 60)
-                minutes = int(x // 60 % 60)
-                seconds = x % 60
-
-                # Check if seconds is an integer
-                if seconds == int(seconds):
-                    return f"{minutes:02}:{int(seconds):02}" if hours < 1 else f"{hours}:{minutes:02}:{int(seconds):02}"
-                else:  # noqa: RET505 , easier to read with the else
-                    return f"{minutes:02}:{seconds:06.3f}" if hours < 1 else f"{hours}:{minutes:02}:{seconds:06.3f}"
 
             ax.xaxis.set_major_formatter(FuncFormatter(format_time))
 
