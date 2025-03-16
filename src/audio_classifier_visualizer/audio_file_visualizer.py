@@ -53,10 +53,16 @@ class _STFTComponent:
 
 
 class _WaveletComponent:
-    def __init__(self, chunk_size=65536, freq_range_of_interest=(100, 1200)):
+    def __init__(
+        self,
+        chunk_size: int = 65536,
+        decimation_stride: int = 1024,
+        freq_range_of_interest: tuple[float, float] = (100, 1200),
+    ):
         self.wavelet = sqz.Wavelet()
         self.logger = logging.getLogger(__name__)
-        self.chunk_size = chunk_size
+        self.decimation_stride = decimation_stride
+        self.chunk_size = ((chunk_size + decimation_stride) // decimation_stride) * decimation_stride
         self.freq_range_of_interest = freq_range_of_interest
 
     def get_bounds_scales_and_freqs(self, y, sr, wavelet=None):
@@ -89,19 +95,22 @@ class _WaveletComponent:
             chunk = padded_audio[start:end]
             wx, scales = sqz.cwt(chunk, wavelet, scales=scales)
             if isinstance(wx, torch.Tensor):
-                wx = wx.cpu()
-            results.append(wx[:, overlap:-overlap])
+                wx = wx.detach().numpy(force=True)
+            spec_for_this_chunk = wx[:, overlap:-overlap]
+
+            results.append(spec_for_this_chunk)
         spectral_amplitude = np.concatenate(results, axis=1)
         spectral_power = np.abs(spectral_amplitude) ** 2
 
         return spectral_amplitude, freqs, spectral_power
 
-    def ssq_cwt_in_chunks(self, y: np.ndarray, sr: int, wavelet=None, overlap=512):
+    def ssq_cwt_in_chunks(self, y: np.ndarray, sr: int, wavelet=None, overlap=4096):
         wavelet = wavelet or self.wavelet
         bounds, scales, freqs = self.get_bounds_scales_and_freqs(y, sr, wavelet)
 
         padded_audio = np.pad(y, (overlap, overlap), mode="constant")
-        results = []
+        results_amp = []
+        results_pwr = []
         self.logger.debug("... processing chunks")
         for start in range(0, len(padded_audio) - 2 * overlap, self.chunk_size):
             end = start + self.chunk_size + 2 * overlap
@@ -113,14 +122,36 @@ class _WaveletComponent:
                 # cache_wavelet=True,
                 # fs=44100,
             )
-            self.logger.debug(f"chunk shape {chunk.shape}, tx shape {tx.shape}")
+            # self.logger.debug(f"chunk shape {chunk.shape}, tx shape {tx.shape}")
             if isinstance(tx, torch.Tensor):
-                tx = tx.cpu()
-            results.append(tx[:, overlap:-overlap])
-        self.logger.debug("... concatenating chunks")
+                tx = tx.detach().numpy(force=True)
 
-        spectral_amplitude = np.concatenate(results, axis=1)
-        spectral_power = np.abs(spectral_amplitude) ** 2
+            spec_for_this_chunk = tx[:, overlap:-overlap]
+            spectral_power = np.abs(spec_for_this_chunk) ** 2
+            # decimate results similar to stft hop_length to avoid OOM on 24-hour audio recordings
+            decimation_stride = self.decimation_stride
+            if spectral_power.shape[1] % decimation_stride != 0:
+                mean_value = np.mean(spectral_power)  # TODO: consider row means
+                padding_length = (decimation_stride - spectral_power.shape[1] % decimation_stride) % decimation_stride
+                padded_spectral_power = np.pad(
+                    spectral_power, ((0, 0), (0, padding_length)), mode="constant", constant_values=mean_value
+                )
+                spectral_power = padded_spectral_power
+            # Decimating spectral power using mean() makes better visualizations than
+            # just subsampling like stft hop lengths.  Doesn't work on amplitudes, though,
+            # because they're complex values; so we just subsample those.
+            # spectral_power = spectral_power[:, ::decimation_stride]
+            decimated_tx = spec_for_this_chunk[:, ::decimation_stride].copy()  # helps garbage collection?
+            decimated_spectral_power = einx.mean("a (b c) -> a b", spectral_power, c=decimation_stride)
+            results_amp.append(decimated_tx)
+            results_pwr.append(decimated_spectral_power)
+            # logging.getLogger(__name__).debug("... Done decimating cwt")
+
+        # spectral_amplitude = np.concatenate(results, axis=1)
+        # spectral_power = np.abs(spectral_amplitude) ** 2
+        spectral_amplitude = np.concatenate(results_amp, axis=1)
+        spectral_power = np.concatenate(results_pwr, axis=1)
+        self.logger.debug(f"... concatenated chunks {spectral_power.shape}, {spectral_amplitude.shape}")
 
         return spectral_amplitude, freqs, spectral_power
 
@@ -145,7 +176,9 @@ class _SpectrogramComponent:
         self.sr = sr
 
         self.stft_component = _STFTComponent(n_fft, hop_length, freq_range_of_interest=freq_range_of_interest)
-        self.wavelet_component = _WaveletComponent(freq_range_of_interest=freq_range_of_interest)
+        self.wavelet_component = _WaveletComponent(
+            freq_range_of_interest=freq_range_of_interest, decimation_stride=hop_length
+        )
 
         self.class_probabilities = class_probabilities
         self.feature_rate = feature_rate if feature_rate is not None else sr // 320
@@ -327,18 +360,18 @@ class _SpectrogramComponent:
             spec, freqs, spectral_power = self.wavelet_component.ssq_cwt_in_chunks(self.audio, self.sr)
             # spec, freqs, spectral_power = self.wavelet_component.cwt_in_chunks(self.audio, self.sr)
             logging.getLogger(__name__).debug("... Done processing cwt")
-            decimation_stride = self.stft_component.hop_length
-            mean_value = np.mean(spectral_power)  # TODO: consider row means
-            padding_length = (decimation_stride - spectral_power.shape[1] % decimation_stride) % decimation_stride
-            padded_spectral_power = np.pad(
-                spectral_power, ((0, 0), (0, padding_length)), mode="constant", constant_values=mean_value
-            )
-            spectral_power = einx.mean("a (b c) -> a b", padded_spectral_power, c=decimation_stride)
-            # spectral_power = spectral_power[:, ::decimation_stride]
-            spec = spec[:, ::decimation_stride]
-            logging.getLogger(__name__).debug("... Done decimating cwt")
+            # decimation_stride = self.stft_component.hop_length
+            # mean_value = np.mean(spectral_power)  # TODO: consider row means
+            # padding_length = (decimation_stride - spectral_power.shape[1] % decimation_stride) % decimation_stride
+            # padded_spectral_power = np.pad(
+            #     spectral_power, ((0, 0), (0, padding_length)), mode="constant", constant_values=mean_value
+            # )
+            # spectral_power = einx.mean("a (b c) -> a b", padded_spectral_power, c=decimation_stride)
+            # # spectral_power = spectral_power[:, ::decimation_stride]
+            # spec = spec[:, ::decimation_stride]
+            # logging.getLogger(__name__).debug("... Done decimating cwt")
 
-            t = np.linspace(0, self.duration, len(spectral_power))
+            t = np.linspace(0, self.duration, len(spectral_power))  # TODO: is this needed?
             self._ticks(t, freqs, ax)
 
         try_pcn = (method == Subplot.STFT_SPECTROGRAM) and self.try_per_channel_normalization
@@ -382,7 +415,6 @@ class _SpectrogramComponent:
             s_db_rgb = np.stack((normed, normed, normed), axis=-1)
             s_db_rgb = normed
 
-
         if method == Subplot.WAVELET_SPECTROGRAM:
             ax.set_ylabel("Wavelet Hz")
             self._ticks(t, freqs, ax)
@@ -395,7 +427,7 @@ class _SpectrogramComponent:
 
         if method == Subplot.STFT_SPECTROGRAM:
             ax.imshow(
-                s_db_rgb,#.transpose(0, 1, 2),
+                s_db_rgb,  # .transpose(0, 1, 2),
                 aspect="auto",
                 origin="lower",
                 extent=[self.start_time, self.end_time, freqs[0], freqs[-1]],
@@ -449,7 +481,7 @@ class AudioFileVisualizer:
         class_labels: list[str] | None = None,
         label_boxes: list[Any] | None = None,
         target_class: int | None = None,
-        # 
+        #
         resample_to_sr: int | None = None,
         display_time_offset: int = 0,
     ) -> None:
@@ -568,22 +600,19 @@ class AudioFileVisualizer:
         intervals = {1: 0.25, 3: 0.5, 10: 1, 60: 5, 300: 30, 600: 60, 3600: 300, 7200: 600, 86400: 3600}
         return next((v for k, v in intervals.items() if duration <= k), 7200)
 
-    def generate_plot(self,
-                        height: float = 1280 / 100,
-                        width: float = 1920 / 100,
-                        save_file: str|None = None
-                      ) -> None:
+    def generate_plot(
+        self, height: float = 1280 / 100, width: float = 1920 / 100, save_file: str | None = None
+    ) -> None:
         plt.ioff()
-        font_size = width * 10 / (1920/100) # font size 10 looks good on that sized plot
-        plt.rc('font', size=font_size)
+        font_size = width * 10 / (1920 / 100)  # font size 10 looks good on that sized plot
+        plt.rc("font", size=font_size)
 
         enabled_subplots = self.enabled_subplots
-        
+
         if self.class_probabilities is None:
             enabled_subplots.discard(Subplot.SIMILARITIES)
             enabled_subplots.discard(Subplot.CLASS_PROBABILITIES)
             enabled_subplots.discard(Subplot.CLASS_PROBABILITY_LINES)
-
 
         n_subplots = len(enabled_subplots)
         height_ratios = [
@@ -597,9 +626,7 @@ class AudioFileVisualizer:
         height_ratios = [h for h in height_ratios if h > 0]  # Remove zero heights
 
         gs = {"height_ratios": height_ratios}
-        self.fig, self.axes = plt.subplots(
-            len(height_ratios), 1, sharex=True, figsize=(width,height), gridspec_kw=gs
-        )
+        self.fig, self.axes = plt.subplots(len(height_ratios), 1, sharex=True, figsize=(width, height), gridspec_kw=gs)
         for i in range(len(height_ratios)):
             self.axes[i].set_xlim(60, 120)
 
@@ -676,18 +703,16 @@ class AudioFileVisualizer:
         self.logger.info("  visualizations saved to %s", save_file)
         return plt
 
-    def setup_plot(
-        self, title: str, start_time: float, end_time: float
-    ) -> None:
+    def setup_plot(self, title: str, start_time: float, end_time: float) -> None:
         self.title = title
-        #self.save_file = save_file
+        # self.save_file = save_file
         self.start_time = start_time
         self.end_time = end_time
-        #self.width = width
-        #self.height = height
+        # self.width = width
+        # self.height = height
         self.duration = end_time - start_time
         self.audio_duration = self.audio.shape[0] / self.sr
-        
+
     def visualize_audio_file_fragment(
         self,
         title: str,
@@ -702,4 +727,4 @@ class AudioFileVisualizer:
         if end_time is None:
             end_time = self.audio_duration
         self.setup_plot(title, start_time, end_time)
-        return self.generate_plot(width=width,height=height,save_file=save_file)
+        return self.generate_plot(width=width, height=height, save_file=save_file)

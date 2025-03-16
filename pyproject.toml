@@ -95,6 +95,9 @@ test-cov = "pytest --cov {args:tests}"
 [tool.ruff.lint.extend-per-file-ignores]
 "src/audio_classifier_visualizer/main.py"= ["T201"]
 "tests/*" = ["T201"]
+"src/*" = [
+  "G004", # f-strings are the most convenient for many log messages
+]
 
 [tool.hatch.build.targets.sdist]
 include = [
