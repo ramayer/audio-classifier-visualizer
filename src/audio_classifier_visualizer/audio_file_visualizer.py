@@ -113,6 +113,7 @@ class _WaveletComponent:
                 # cache_wavelet=True,
                 # fs=44100,
             )
+            self.logger.debug(f"chunk shape {chunk.shape}, tx shape {tx.shape}")
             if isinstance(tx, torch.Tensor):
                 tx = tx.cpu()
             results.append(tx[:, overlap:-overlap])
@@ -154,8 +155,12 @@ class _SpectrogramComponent:
         self.clip_outliers = clip_outliers
         self.label_boxes = label_boxes
 
-        self.similarity_scores = class_probabilities.cpu()[:, target_class or 1]
-        self.dissimilarity_scores = 1 - self.similarity_scores  # class_probabilities.cpu()[:, 0]
+        if class_probabilities is not None:
+            self.similarity_scores = class_probabilities.cpu()[:, target_class or 1]
+            self.dissimilarity_scores = 1 - self.similarity_scores  # class_probabilities.cpu()[:, 0]
+        else:
+            self.similarity_scores = None
+            self.dissimilarity_scores = None
 
         self.duration = self.audio.shape[0] / self.sr
 
@@ -371,37 +376,43 @@ class _SpectrogramComponent:
             s_db_rgb[:, :, 0] = s_db_rgb[:, :, 0] * redness
             s_db_rgb[:, :, 1] = s_db_rgb[:, :, 1] * greenness
             s_db_rgb[:, :, 2] = s_db_rgb[:, :, 2] * blueness
-
-            if method == Subplot.WAVELET_SPECTROGRAM:
-                ax.set_ylabel("Wavelet Hz")
-                self._ticks(t, freqs, ax)
-                # ax.imshow(s_db, aspect="auto",cmap='magma',extent=[self.start_time, self.end_time, len(freqs),0],)
-                ax.imshow(
-                    s_db_rgb,
-                    aspect="auto",
-                    extent=[self.start_time, self.end_time, len(freqs), 0],
-                )
-
-            if method == Subplot.STFT_SPECTROGRAM:
-                ax.imshow(
-                    s_db_rgb.transpose(0, 1, 2),
-                    aspect="auto",
-                    origin="lower",
-                    extent=[self.start_time, self.end_time, freqs[0], freqs[-1]],
-                )
-                ax.set_ylabel("STFT Hz")
-
         else:
-            librosa.display.specshow(
-                s_db,
-                sr=self.sr,
-                n_fft=self.n_fft,
-                hop_length=self.hop_length,
-                x_axis="time",
-                y_axis="linear",
-                y_coords=self.freqs,
-                ax=ax,
+            mx, mn = np.max(s_db), np.min(s_db)
+            normed = (s_db - mn) / (mx - mn)
+            s_db_rgb = np.stack((normed, normed, normed), axis=-1)
+            s_db_rgb = normed
+
+
+        if method == Subplot.WAVELET_SPECTROGRAM:
+            ax.set_ylabel("Wavelet Hz")
+            self._ticks(t, freqs, ax)
+            # ax.imshow(s_db, aspect="auto",cmap='magma',extent=[self.start_time, self.end_time, len(freqs),0],)
+            ax.imshow(
+                s_db_rgb,
+                aspect="auto",
+                extent=[self.start_time, self.end_time, len(freqs), 0],
             )
+
+        if method == Subplot.STFT_SPECTROGRAM:
+            ax.imshow(
+                s_db_rgb,#.transpose(0, 1, 2),
+                aspect="auto",
+                origin="lower",
+                extent=[self.start_time, self.end_time, freqs[0], freqs[-1]],
+            )
+            ax.set_ylabel("STFT Hz")
+
+        # else:
+        #     librosa.display.specshow(
+        #         s_db,
+        #         sr=self.sr,
+        #         n_fft=self.n_fft,
+        #         hop_length=self.hop_length,
+        #         x_axis="time",
+        #         y_axis="linear",
+        #         y_coords=self.freqs,
+        #         ax=ax,
+        #     )
 
         if self.label_boxes and method == Subplot.STFT_SPECTROGRAM:
             # TODO: find the write positions for the labels in the wavelet image
@@ -420,19 +431,26 @@ class _SpectrogramComponent:
 class AudioFileVisualizer:
     def __init__(
         self,
+        # alternative audio setup
         audio_file: str | None = None,
+        # prefered audio setup
         y: np.ndarray | None = None,
         sr: int | None = None,
+        *,
+        # alternative audio setup
         start_time: float = 0,
         end_time: float | None = None,
+        # stft setup
         n_fft: int = 2048,
+        freq_range_of_interest: tuple[float, float] | None = None,
+        # clasifier/label setup
         feature_rate: int | None = None,
         class_probabilities: torch.Tensor | None = None,
         class_labels: list[str] | None = None,
         label_boxes: list[Any] | None = None,
         target_class: int | None = None,
+        # 
         resample_to_sr: int | None = None,
-        freq_range_of_interest: tuple[float, float] | None = None,
         display_time_offset: int = 0,
     ) -> None:
         self.logger = logging.getLogger(__name__)
@@ -494,18 +512,6 @@ class AudioFileVisualizer:
         z = input_tensor[None, None, :]
         return torch.nn.functional.interpolate(z, target_length, mode="linear")[0][0]
 
-    def setup_plot(
-        self, title: str, save_file: str, start_time: float, end_time: float, width: float, height: float
-    ) -> None:
-        self.title = title
-        self.save_file = save_file
-        self.start_time = start_time
-        self.end_time = end_time
-        self.width = width
-        self.height = height
-        self.duration = end_time - start_time
-        self.audio_duration = self.audio.shape[0] / self.sr
-
     def _plot_waveform(self, ax: Axes) -> None:
         times = np.linspace(0, self.audio_duration, len(self.audio))
         ax.plot(times, self.audio, linewidth=0.5)
@@ -562,49 +568,63 @@ class AudioFileVisualizer:
         intervals = {1: 0.25, 3: 0.5, 10: 1, 60: 5, 300: 30, 600: 60, 3600: 300, 7200: 600, 86400: 3600}
         return next((v for k, v in intervals.items() if duration <= k), 7200)
 
-    def generate_plot(self) -> None:
+    def generate_plot(self,
+                        height: float = 1280 / 100,
+                        width: float = 1920 / 100,
+                        save_file: str|None = None
+                      ) -> None:
         plt.ioff()
+        font_size = width * 10 / (1920/100) # font size 10 looks good on that sized plot
+        plt.rc('font', size=font_size)
 
-        n_subplots = len(self.enabled_subplots)
+        enabled_subplots = self.enabled_subplots
+        
+        if self.class_probabilities is None:
+            enabled_subplots.discard(Subplot.SIMILARITIES)
+            enabled_subplots.discard(Subplot.CLASS_PROBABILITIES)
+            enabled_subplots.discard(Subplot.CLASS_PROBABILITY_LINES)
+
+
+        n_subplots = len(enabled_subplots)
         height_ratios = [
-            1 if Subplot.WAVEFORM in self.enabled_subplots else 0,
-            3 if Subplot.STFT_SPECTROGRAM in self.enabled_subplots else 0,
-            3 if Subplot.WAVELET_SPECTROGRAM in self.enabled_subplots else 0,
-            1 if Subplot.SIMILARITIES in self.enabled_subplots else 0,
-            2 if Subplot.CLASS_PROBABILITIES in self.enabled_subplots else 0,
-            1 if Subplot.CLASS_PROBABILITY_LINES in self.enabled_subplots else 0,
+            1 if Subplot.WAVEFORM in enabled_subplots else 0,
+            3 if Subplot.STFT_SPECTROGRAM in enabled_subplots else 0,
+            3 if Subplot.WAVELET_SPECTROGRAM in enabled_subplots else 0,
+            1 if Subplot.SIMILARITIES in enabled_subplots else 0,
+            2 if Subplot.CLASS_PROBABILITIES in enabled_subplots else 0,
+            1 if Subplot.CLASS_PROBABILITY_LINES in enabled_subplots else 0,
         ]
         height_ratios = [h for h in height_ratios if h > 0]  # Remove zero heights
 
         gs = {"height_ratios": height_ratios}
         self.fig, self.axes = plt.subplots(
-            len(height_ratios), 1, sharex=True, figsize=(self.width, self.height), gridspec_kw=gs
+            len(height_ratios), 1, sharex=True, figsize=(width,height), gridspec_kw=gs
         )
         for i in range(len(height_ratios)):
             self.axes[i].set_xlim(60, 120)
 
         subplot_index = 0
-        if Subplot.WAVEFORM in self.enabled_subplots:
+        if Subplot.WAVEFORM in enabled_subplots:
             self.logger.debug("WAVEFORM")
             self._plot_waveform(self.axes[subplot_index])
             subplot_index += 1
-        if Subplot.STFT_SPECTROGRAM in self.enabled_subplots:
+        if Subplot.STFT_SPECTROGRAM in enabled_subplots:
             self.logger.debug("STFT_SPECTROGRAM")
             self.spectrogram_component.plot_spectrogram(self.axes[subplot_index])
             subplot_index += 1
-        if Subplot.WAVELET_SPECTROGRAM in self.enabled_subplots:
+        if Subplot.WAVELET_SPECTROGRAM in enabled_subplots:
             self.logger.debug("WAVELET_SPECTROGRAM")
             self.spectrogram_component.plot_spectrogram(self.axes[subplot_index], method=Subplot.WAVELET_SPECTROGRAM)
             subplot_index += 1
-        if Subplot.SIMILARITIES in self.enabled_subplots:
+        if Subplot.SIMILARITIES in enabled_subplots:
             self.logger.debug("SIMILARITIES")
             self._plot_similarities(self.axes[subplot_index])
             subplot_index += 1
-        if Subplot.CLASS_PROBABILITIES in self.enabled_subplots:
+        if Subplot.CLASS_PROBABILITIES in enabled_subplots:
             self.logger.debug("CLASS_PROBABILITIES")
             self._plot_class_probabilities(self.axes[subplot_index])
             subplot_index += 1
-        if Subplot.CLASS_PROBABILITY_LINES in self.enabled_subplots:
+        if Subplot.CLASS_PROBABILITY_LINES in enabled_subplots:
             self.logger.debug("CLASS_PROBABILITY_LINES")
             self._plot_class_probability_lines(self.axes[subplot_index])
 
@@ -649,13 +669,25 @@ class AudioFileVisualizer:
         self.fig.suptitle(f"{self.title}", fontsize=16, ha="left", x=0)
         self.logger.debug("  saving %s", displaytime)
 
-        if self.save_file:
-            plt.savefig(self.save_file, bbox_inches="tight", pad_inches=0.02)
+        if save_file:
+            plt.savefig(save_file, bbox_inches="tight", pad_inches=0.02)
             plt.close()
             plt.close("all")
-        self.logger.info("  visualizations saved to %s", self.save_file)
+        self.logger.info("  visualizations saved to %s", save_file)
         return plt
 
+    def setup_plot(
+        self, title: str, start_time: float, end_time: float
+    ) -> None:
+        self.title = title
+        #self.save_file = save_file
+        self.start_time = start_time
+        self.end_time = end_time
+        #self.width = width
+        #self.height = height
+        self.duration = end_time - start_time
+        self.audio_duration = self.audio.shape[0] / self.sr
+        
     def visualize_audio_file_fragment(
         self,
         title: str,
@@ -669,5 +701,5 @@ class AudioFileVisualizer:
         # For backwards compatibility
         if end_time is None:
             end_time = self.audio_duration
-        self.setup_plot(title, save_file, start_time, end_time, width, height)
-        return self.generate_plot()
+        self.setup_plot(title, start_time, end_time)
+        return self.generate_plot(width=width,height=height,save_file=save_file)
