@@ -84,34 +84,64 @@ class _WaveletComponent:
 
         return bounds, scales, freqs
 
+    def decimate_wavelet_results(self, spec_amp, spec_pwr):
+        """
+        Decimate the wavelet results to be about as memory-efficent
+        as a STFT with a given hop-length to avoid OOM on 24-hour audio
+        recordings.
+
+        Decimating spectral power using mean() makes better visualizations than
+        just subsampling like stft hop lengths.  Doesn't work on amplitudes, though,
+        because they're complex values; so we just subsample those.
+        spectral_power = spectral_power[:, ::decimation_stride]
+
+        Perhaps consider padding using row-based mean; but that
+        could be misleading in a different way.
+        """
+        decimation_stride = self.decimation_stride
+        if spec_pwr.shape[1] % decimation_stride != 0:
+            mean_value = np.mean(spec_pwr)
+            padding_length = (decimation_stride - spec_pwr.shape[1] % decimation_stride) % decimation_stride
+            padded_spectral_power = np.pad(
+                spec_pwr, ((0, 0), (0, padding_length)), mode="constant", constant_values=mean_value
+            )
+            spec_pwr = padded_spectral_power
+        decimated_amp = spec_amp[:, ::decimation_stride].copy()  # helps garbage collection?
+        decimated_pwr = einx.mean("a (b c) -> a b", spec_pwr, c=decimation_stride)
+        return decimated_amp, decimated_pwr
+
     def cwt_in_chunks(self, y: np.ndarray, sr: int, wavelet=None, overlap=512):
         wavelet = wavelet or self.wavelet
-        bounds, scales, freqs = self.get_bounds_scales_and_freqs(y, sr, wavelet)
+        _bounds, scales, freqs = self.get_bounds_scales_and_freqs(y, sr, wavelet)
 
         padded_audio = np.pad(y, (overlap, overlap), mode="constant")
-        results = []
+        results_amp = []
+        results_pwr = []
         for start in range(0, len(padded_audio) - 2 * overlap, self.chunk_size):
             end = start + self.chunk_size + 2 * overlap
             chunk = padded_audio[start:end]
             wx, scales = sqz.cwt(chunk, wavelet, scales=scales)
             if isinstance(wx, torch.Tensor):
                 wx = wx.detach().numpy(force=True)
+
             spec_for_this_chunk = wx[:, overlap:-overlap]
+            spectral_power = np.abs(spec_for_this_chunk) ** 2
 
-            results.append(spec_for_this_chunk)
-        spectral_amplitude = np.concatenate(results, axis=1)
-        spectral_power = np.abs(spectral_amplitude) ** 2
+            decimated_tx, decimated_pwr = self.decimate_wavelet_results(spec_for_this_chunk, spectral_power)
+            results_amp.append(decimated_tx)
+            results_pwr.append(decimated_pwr)
 
+        spectral_amplitude = np.concatenate(results_amp, axis=1)
+        spectral_power = np.concatenate(results_pwr, axis=1)
         return spectral_amplitude, freqs, spectral_power
 
     def ssq_cwt_in_chunks(self, y: np.ndarray, sr: int, wavelet=None, overlap=4096):
         wavelet = wavelet or self.wavelet
-        bounds, scales, freqs = self.get_bounds_scales_and_freqs(y, sr, wavelet)
+        _bounds, scales, freqs = self.get_bounds_scales_and_freqs(y, sr, wavelet)
 
         padded_audio = np.pad(y, (overlap, overlap), mode="constant")
         results_amp = []
         results_pwr = []
-        self.logger.debug("... processing chunks")
         for start in range(0, len(padded_audio) - 2 * overlap, self.chunk_size):
             end = start + self.chunk_size + 2 * overlap
             chunk = padded_audio[start:end]
@@ -122,37 +152,18 @@ class _WaveletComponent:
                 # cache_wavelet=True,
                 # fs=44100,
             )
-            # self.logger.debug(f"chunk shape {chunk.shape}, tx shape {tx.shape}")
             if isinstance(tx, torch.Tensor):
                 tx = tx.detach().numpy(force=True)
 
             spec_for_this_chunk = tx[:, overlap:-overlap]
             spectral_power = np.abs(spec_for_this_chunk) ** 2
-            # decimate results similar to stft hop_length to avoid OOM on 24-hour audio recordings
-            decimation_stride = self.decimation_stride
-            if spectral_power.shape[1] % decimation_stride != 0:
-                mean_value = np.mean(spectral_power)  # TODO: consider row means
-                padding_length = (decimation_stride - spectral_power.shape[1] % decimation_stride) % decimation_stride
-                padded_spectral_power = np.pad(
-                    spectral_power, ((0, 0), (0, padding_length)), mode="constant", constant_values=mean_value
-                )
-                spectral_power = padded_spectral_power
-            # Decimating spectral power using mean() makes better visualizations than
-            # just subsampling like stft hop lengths.  Doesn't work on amplitudes, though,
-            # because they're complex values; so we just subsample those.
-            # spectral_power = spectral_power[:, ::decimation_stride]
-            decimated_tx = spec_for_this_chunk[:, ::decimation_stride].copy()  # helps garbage collection?
-            decimated_spectral_power = einx.mean("a (b c) -> a b", spectral_power, c=decimation_stride)
-            results_amp.append(decimated_tx)
-            results_pwr.append(decimated_spectral_power)
-            # logging.getLogger(__name__).debug("... Done decimating cwt")
 
-        # spectral_amplitude = np.concatenate(results, axis=1)
-        # spectral_power = np.abs(spectral_amplitude) ** 2
+            decimated_tx, decimated_pwr = self.decimate_wavelet_results(spec_for_this_chunk, spectral_power)
+            results_amp.append(decimated_tx)
+            results_pwr.append(decimated_pwr)
+
         spectral_amplitude = np.concatenate(results_amp, axis=1)
         spectral_power = np.concatenate(results_pwr, axis=1)
-        self.logger.debug(f"... concatenated chunks {spectral_power.shape}, {spectral_amplitude.shape}")
-
         return spectral_amplitude, freqs, spectral_power
 
 
@@ -371,7 +382,8 @@ class _SpectrogramComponent:
             # spec = spec[:, ::decimation_stride]
             # logging.getLogger(__name__).debug("... Done decimating cwt")
 
-            t = np.linspace(0, self.duration, len(spectral_power))  # TODO: is this needed?
+            # t = np.linspace(0, self.duration, len(spectral_power))  # TODO: is this needed?
+            t = None
             self._ticks(t, freqs, ax)
 
         try_pcn = (method == Subplot.STFT_SPECTROGRAM) and self.try_per_channel_normalization
@@ -684,23 +696,31 @@ class AudioFileVisualizer:
 
             ax.xaxis.set_major_formatter(FuncFormatter(format_time))
 
+        plt.gca().set_xlim(self.start_time, self.end_time)
+
+        # Make title
+        title = self.title
+        st = self.start_time + self.display_time_offset
         hour, minute, second = (
-            int(self.start_time // 60 // 60),
-            int(self.start_time // 60) % 60,
-            int(self.start_time) % 60,
+            int(st // 60 // 60),
+            int(st // 60) % 60,
+            int(st) % 60,
         )
         displaytime = f"{hour:02}:{minute:02}:{second:02}" if hour > 0 else f"{minute:02}:{second:02}"
+        if st > 0:
+            title = title + " at " + displaytime
         # plt.gca().set_xticks(np.arange(88, 3*60, 30))
-        plt.gca().set_xlim(self.start_time, self.end_time)
         plt.subplots_adjust(top=0.93, left=0)
-        self.fig.suptitle(f"{self.title}", fontsize=16, ha="left", x=0)
-        self.logger.debug("  saving %s", displaytime)
+        self.fig.suptitle(f"{title}", fontsize=16, ha="left", x=0)
+        # self.logger.debug("  saving %s", displaytime)
 
         if save_file:
             plt.savefig(save_file, bbox_inches="tight", pad_inches=0.02)
             plt.close()
             plt.close("all")
-        self.logger.info("  visualizations saved to %s", save_file)
+            self.logger.info("  visualizations saved to %s", save_file)
+        else:
+            self.logger.debug("  visualizations done")
         return plt
 
     def setup_plot(self, title: str, start_time: float, end_time: float) -> None:
