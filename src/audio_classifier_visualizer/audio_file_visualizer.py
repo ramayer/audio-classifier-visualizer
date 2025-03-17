@@ -639,40 +639,43 @@ class AudioFileVisualizer:
 
         gs = {"height_ratios": height_ratios}
         self.fig, self.axes = plt.subplots(len(height_ratios), 1, sharex=True, figsize=(width, height), gridspec_kw=gs)
-        for i in range(len(height_ratios)):
-            self.axes[i].set_xlim(60, 120)
+
+        print(f"self.axes = {type(self.axes)}")
+        axes = self.axes if isinstance(self.axes,np.ndarray) else [self.axes]
+        #for i in range(len(height_ratios)):
+        #    self.axes[i].set_xlim(60, 120)
 
         subplot_index = 0
         if Subplot.WAVEFORM in enabled_subplots:
             self.logger.debug("WAVEFORM")
-            self._plot_waveform(self.axes[subplot_index])
+            self._plot_waveform(axes[subplot_index])
             subplot_index += 1
         if Subplot.STFT_SPECTROGRAM in enabled_subplots:
             self.logger.debug("STFT_SPECTROGRAM")
-            self.spectrogram_component.plot_spectrogram(self.axes[subplot_index])
+            self.spectrogram_component.plot_spectrogram(axes[subplot_index])
             subplot_index += 1
         if Subplot.WAVELET_SPECTROGRAM in enabled_subplots:
             self.logger.debug("WAVELET_SPECTROGRAM")
-            self.spectrogram_component.plot_spectrogram(self.axes[subplot_index], method=Subplot.WAVELET_SPECTROGRAM)
+            self.spectrogram_component.plot_spectrogram(axes[subplot_index], method=Subplot.WAVELET_SPECTROGRAM)
             subplot_index += 1
         if Subplot.SIMILARITIES in enabled_subplots:
             self.logger.debug("SIMILARITIES")
-            self._plot_similarities(self.axes[subplot_index])
+            self._plot_similarities(axes[subplot_index])
             subplot_index += 1
         if Subplot.CLASS_PROBABILITIES in enabled_subplots:
             self.logger.debug("CLASS_PROBABILITIES")
-            self._plot_class_probabilities(self.axes[subplot_index])
+            self._plot_class_probabilities(axes[subplot_index])
             subplot_index += 1
         if Subplot.CLASS_PROBABILITY_LINES in enabled_subplots:
             self.logger.debug("CLASS_PROBABILITY_LINES")
-            self._plot_class_probability_lines(self.axes[subplot_index])
+            self._plot_class_probability_lines(axes[subplot_index])
 
-        for i in range(n_subplots):
-            self.axes[i].set_xlim(60, 120)
+        #for i in range(n_subplots):
+        #    self.axes[i].set_xlim(60, 120)
 
-        for ax in self.axes:
+        for ax in axes:
             ax.tick_params(axis="x", which="both", bottom=False, top=False, labelbottom=False)
-            # ax.set_xlim(self.start_time, self.end_time)
+            ax.set_xlim(self.start_time, self.end_time)
 
         self.logger.debug("axes formatting")
         display_time_offset = self.display_time_offset
@@ -687,7 +690,7 @@ class AudioFileVisualizer:
             else:  # noqa: RET505 , easier to read with the else
                 return f"{minutes:02}:{seconds:06.3f}" if hours < 1 else f"{hours}:{minutes:02}:{seconds:06.3f}"
 
-        for ax in self.axes[-1:]:
+        for ax in axes[-1:]:
             ax.tick_params(axis="x", which="both", bottom=True, top=False, labelbottom=True)
             ax.set_xlabel("Time")
             tick_interval = self._get_tick_interval(self.end_time - self.start_time)
