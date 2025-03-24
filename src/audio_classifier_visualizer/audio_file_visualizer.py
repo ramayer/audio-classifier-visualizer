@@ -493,6 +493,7 @@ class AudioFileVisualizer:
         class_labels: list[str] | None = None,
         label_boxes: list[Any] | None = None,
         target_class: int | None = None,
+        point_labels: list[tuple[float,float]] = [],
         #
         resample_to_sr: int | None = None,
         display_time_offset: int = 0,
@@ -519,6 +520,7 @@ class AudioFileVisualizer:
         self.class_probabilities = class_probabilities
         self.class_labels = class_labels
         self.target_class = target_class
+        self.point_labels = point_labels
 
         # Compute spectral features
         self.logger.debug("constructing spectrogram")
@@ -559,6 +561,10 @@ class AudioFileVisualizer:
     def _plot_waveform(self, ax: Axes) -> None:
         times = np.linspace(0, self.audio_duration, len(self.audio))
         ax.plot(times, self.audio, linewidth=0.5)
+
+        for t,h in self.point_labels:
+            ax.plot(t,h,'ro',markersize=10)
+
         ax.set_ylabel("Amplitude")
         # ax.set_xlim(self.start_time, self.duration)
         # ax.set_xticks(np.arange(0, self.duration + 1, 30))

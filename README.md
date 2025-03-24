@@ -43,3 +43,8 @@ pip install --quiet git+https://github.com/ramayer/audio-classifier-visualizer
 ## License
 
 `audio-classifier-visualizer` is distributed under the terms of the [MIT](https://spdx.org/licenses/MIT.html) license.
+
+## TODO 
+
+* reduce dependencies, perhaps using torchaudio for more [torchaudio.transforms.Resample(sr, self.sample_rate)(waveform)]
+
