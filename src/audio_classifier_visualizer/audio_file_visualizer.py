@@ -56,9 +56,10 @@ class _WaveletComponent:
     def __init__(
         self,
         chunk_size: int = 65536,
-        decimation_stride: int = 1024,
-        freq_range_of_interest: tuple[float, float] = (100, 1200),
+        decimation_stride: int | None = 1024,
+        freq_range_of_interest: tuple[float, float] | None = (100, 1200),
     ):
+        decimation_stride = decimation_stride or 1024
         self.wavelet = sqz.Wavelet()
         self.logger = logging.getLogger(__name__)
         self.decimation_stride = decimation_stride
@@ -120,11 +121,11 @@ class _WaveletComponent:
         for start in range(0, len(padded_audio) - 2 * overlap, self.chunk_size):
             end = start + self.chunk_size + 2 * overlap
             chunk = padded_audio[start:end]
-            wx, scales = sqz.cwt(chunk, wavelet, scales=scales)
+            wx, scales = sqz.cwt(chunk, wavelet, scales=scales) # type: ignore
             if isinstance(wx, torch.Tensor):
                 wx = wx.detach().numpy(force=True)
 
-            spec_for_this_chunk = wx[:, overlap:-overlap]
+            spec_for_this_chunk = wx[:, overlap:-overlap] # type: ignore
             spectral_power = np.abs(spec_for_this_chunk) ** 2
 
             decimated_tx, decimated_pwr = self.decimate_wavelet_results(spec_for_this_chunk, spectral_power)
@@ -145,17 +146,17 @@ class _WaveletComponent:
         for start in range(0, len(padded_audio) - 2 * overlap, self.chunk_size):
             end = start + self.chunk_size + 2 * overlap
             chunk = padded_audio[start:end]
-            tx, _wx, _ssq_freqs, _scales = sqz.ssq_cwt(
+            tx, _wx, _ssq_freqs, _scales = sqz.ssq_cwt( # type: ignore
                 chunk,
-                self.wavelet,
-                scales=scales,  # 'log-piecewise',
+                self.wavelet, # type: ignore
+                scales=scales,  # 'log-piecewise', # type: ignore
                 # cache_wavelet=True,
                 # fs=44100,
             )
             if isinstance(tx, torch.Tensor):
                 tx = tx.detach().numpy(force=True)
 
-            spec_for_this_chunk = tx[:, overlap:-overlap]
+            spec_for_this_chunk = tx[:, overlap:-overlap] # type: ignore
             spectral_power = np.abs(spec_for_this_chunk) ** 2
 
             decimated_tx, decimated_pwr = self.decimate_wavelet_results(spec_for_this_chunk, spectral_power)
@@ -181,7 +182,7 @@ class _SpectrogramComponent:
         try_per_channel_normalization: bool = False,  # noqa: FBT001 FBT002
         clip_outliers: bool = True,  # noqa: FBT001 FBT002
         label_boxes: list[Any] | None = None,
-        freq_range_of_interest=None,
+        freq_range_of_interest: tuple[float, float]|None =None,
     ):
         self.audio = y
         self.sr = sr
