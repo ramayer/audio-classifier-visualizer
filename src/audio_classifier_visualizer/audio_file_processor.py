@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 
-#import einops
+import einx
+
+# import einops
 import torch
 import torchaudio.io as tai
 
@@ -47,7 +49,7 @@ class AudioFileProcessor:
         Returns:
             Index in the score array corresponding to the time
         """
-        return t * self.rumble_sr // self.audio_samples_per_embedding
+        return int(t * self.rumble_sr // self.audio_samples_per_embedding)
 
     def score_index_to_time(self, s: int) -> float:
         """Convert score index to time in seconds.
@@ -100,12 +102,16 @@ class AudioFileProcessor:
                 self.logger.warning("Two few audio samples to classify in chunk")
                 return torch.empty(0, 768)
             y32 = chunk.to(torch.float32).view(1, chunk.shape[0]).to(self.device)
+            if not self.aves_model:
+                msg = "invalid aves_model"
+                raise ValueError(msg)
+
             aves_embeddings = self.aves_model.forward(y32).to("cpu").detach()
             if torch.cuda.is_available():
                 del y32  # free space on my small cheap GPU
                 torch.cuda.empty_cache()
-            reshaped_tensor = einops.rearrange(aves_embeddings, "1 n d -> n d")  # remove that batch dimension
-            self.logger.debug("reshaped tensor shape is %s", reshaped_tensor.shape)
+            reshaped_tensor: torch.Tensor = einx.rearrange("1 n d -> n d", aves_embeddings)  # type: ignore
+            self.logger.debug("reshaped tensor shape is %s", str(reshaped_tensor.shape))
             return reshaped_tensor.to("cpu").detach()
 
     def classify_wave_file_for_rumbles(self, wav_file_path, limit_audio_hours=24):
@@ -116,6 +122,9 @@ class AudioFileProcessor:
             frames_per_chunk=self.rumble_sr * 60 * 60,
         )
         results = []
+        if not self.elephant_model:
+            msg = "invalid elephant model"
+            raise ValueError(msg)
         for idx, (prv, cur, nxt) in enumerate(TripleBufferedIterator(streamer.stream())):
             (chunk,) = cur
             if chunk is not None:
@@ -132,9 +141,9 @@ class AudioFileProcessor:
                               """)
                     preroll = torch.empty(0, 1)
                     postroll = torch.empty(0, 1)
-                    if nxt is not None:
+                    if nxt is not None and nxt[0] is not None:
                         postroll = self.make_single_channel(nxt[0][0 : 320 * 16])  # 8 is not enough
-                    if prv is not None and prv[0].shape[0] >= 320 * 16:
+                    if prv is not None and prv[0] is not None and prv[0].shape[0] >= 320 * 16:
                         preroll = self.make_single_channel(prv[0][-320 * 16 :])
                     self.logger.info(
                         "Classifying hour %d of %s %s, %s, %s",
