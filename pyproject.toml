@@ -34,7 +34,7 @@ dependencies = [
   "tbb",
   "torch",
   "torchaudio",
-  "pandas",
+  # "pandas",
   "ssqueezepy",
 ]
 
@@ -49,6 +49,7 @@ Source = "https://github.com/Ron M/audio-classifier-visualizer"
 [project.optional-dependencies]
 test = [
   "elephant-rumble-inference @ git+https://github.com/ramayer/elephant-rumble-inference@v0.9.0-rc1",
+  "pandas"
 ]
 cuda12 = [
   "cupy-cuda12x"
