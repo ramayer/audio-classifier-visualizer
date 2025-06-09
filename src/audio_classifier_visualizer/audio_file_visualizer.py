@@ -36,7 +36,7 @@ class _STFTComponent:
         self.hop_length = hop_length
         self.freq_range_of_interest = freq_range_of_interest
 
-    def get_spectrogram(self, y: np.ndarray, sr: int):
+    def get_spectrogram(self, y: np.ndarray, sr: float):
         spec = librosa.stft(y, n_fft=self.n_fft, win_length=self.n_fft, hop_length=self.hop_length)
         freqs = librosa.fft_frequencies(sr=sr, n_fft=self.n_fft)
         spectral_power = np.abs(spec) ** 2  # type: ignore
@@ -111,7 +111,7 @@ class _WaveletComponent:
         decimated_pwr = einx.mean("a (b c) -> a b", spec_pwr, c=decimation_stride)
         return decimated_amp, decimated_pwr
 
-    def cwt_in_chunks(self, y: np.ndarray, sr: int, wavelet=None, overlap=512):
+    def cwt_in_chunks(self, y: np.ndarray, sr: float, wavelet=None, overlap=512):
         wavelet = wavelet or self.wavelet
         _bounds, scales, freqs = self.get_bounds_scales_and_freqs(y, sr, wavelet)
 
@@ -121,11 +121,11 @@ class _WaveletComponent:
         for start in range(0, len(padded_audio) - 2 * overlap, self.chunk_size):
             end = start + self.chunk_size + 2 * overlap
             chunk = padded_audio[start:end]
-            wx, scales = sqz.cwt(chunk, wavelet, scales=scales) # type: ignore
+            wx, scales = sqz.cwt(chunk, wavelet, scales=scales)  # type: ignore
             if isinstance(wx, torch.Tensor):
                 wx = wx.detach().numpy(force=True)
 
-            spec_for_this_chunk = wx[:, overlap:-overlap] # type: ignore
+            spec_for_this_chunk = wx[:, overlap:-overlap]  # type: ignore
             spectral_power = np.abs(spec_for_this_chunk) ** 2
 
             decimated_tx, decimated_pwr = self.decimate_wavelet_results(spec_for_this_chunk, spectral_power)
@@ -136,7 +136,7 @@ class _WaveletComponent:
         spectral_power = np.concatenate(results_pwr, axis=1)
         return spectral_amplitude, freqs, spectral_power
 
-    def ssq_cwt_in_chunks(self, y: np.ndarray, sr: int, wavelet=None, overlap=4096):
+    def ssq_cwt_in_chunks(self, y: np.ndarray, sr: float, wavelet=None, overlap=4096):
         wavelet = wavelet or self.wavelet
         _bounds, scales, freqs = self.get_bounds_scales_and_freqs(y, sr, wavelet)
 
@@ -146,9 +146,9 @@ class _WaveletComponent:
         for start in range(0, len(padded_audio) - 2 * overlap, self.chunk_size):
             end = start + self.chunk_size + 2 * overlap
             chunk = padded_audio[start:end]
-            tx, _wx, _ssq_freqs, _scales = sqz.ssq_cwt( # type: ignore
+            tx, _wx, _ssq_freqs, _scales = sqz.ssq_cwt(  # type: ignore
                 chunk,
-                self.wavelet, # type: ignore
+                self.wavelet,  # type: ignore
                 scales=scales,  # 'log-piecewise', # type: ignore
                 # cache_wavelet=True,
                 # fs=44100,
@@ -156,7 +156,7 @@ class _WaveletComponent:
             if isinstance(tx, torch.Tensor):
                 tx = tx.detach().numpy(force=True)
 
-            spec_for_this_chunk = tx[:, overlap:-overlap] # type: ignore
+            spec_for_this_chunk = tx[:, overlap:-overlap]  # type: ignore
             spectral_power = np.abs(spec_for_this_chunk) ** 2
 
             decimated_tx, decimated_pwr = self.decimate_wavelet_results(spec_for_this_chunk, spectral_power)
@@ -172,7 +172,7 @@ class _SpectrogramComponent:
     def __init__(
         self,
         y: np.ndarray,
-        sr: int,
+        sr: float,
         class_probabilities: torch.Tensor | None = None,
         feature_rate: float | None = None,
         target_class: int | None = None,
@@ -182,7 +182,7 @@ class _SpectrogramComponent:
         try_per_channel_normalization: bool = False,  # noqa: FBT001 FBT002
         clip_outliers: bool = True,  # noqa: FBT001 FBT002
         label_boxes: list[Any] | None = None,
-        freq_range_of_interest: tuple[float, float]|None =None,
+        freq_range_of_interest: tuple[float, float] | None = None,
     ):
         self.audio = y
         self.sr = sr
@@ -480,7 +480,7 @@ class AudioFileVisualizer:
         audio_file: str | None = None,
         # prefered audio setup
         y: np.ndarray | None = None,
-        sr: int | None = None,
+        sr: float | None = None,
         *,
         # alternative audio setup
         start_time: float = 0,
@@ -489,7 +489,7 @@ class AudioFileVisualizer:
         n_fft: int = 2048,
         freq_range_of_interest: tuple[float, float] | None = None,
         # clasifier/label setup
-        feature_rate: int | None = None,
+        feature_rate: float | None = None,
         class_probabilities: torch.Tensor | None = None,
         class_labels: list[str] | None = None,
         label_boxes: list[Any] | None = None,
@@ -574,7 +574,7 @@ class AudioFileVisualizer:
         # ax.set_xticks(np.arange(0, self.duration + 1, 30))
 
     def _plot_similarities(self, ax: Axes) -> None:
-        if not self.class_probabilities or not self.class_labels:
+        if self.class_probabilities is None or self.class_labels is None:
             return
         similarity = self.class_probabilities[:, self.target_class or 1]
         dissimilarity = 1 - similarity
@@ -592,7 +592,7 @@ class AudioFileVisualizer:
         # ax.set_xticks(np.arange(0, self.duration + 1, 30))
 
     def _plot_class_probabilities(self, ax: Axes) -> None:
-        if not self.class_probabilities or not self.class_labels:
+        if self.class_probabilities is None or self.class_labels is None:
             return
         probs = self.class_probabilities
         labels = self.class_labels
