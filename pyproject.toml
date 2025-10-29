@@ -32,9 +32,10 @@ dependencies = [
   "matplotlib",
   "scikit-learn",
   "tbb",
-  "torch",
-  "torchaudio",
-  # "pandas",
+  # (torchaudio.io 's apis changed in torchaudio2.9 - transition to torchcodec)
+  #"torch",
+  #"torchaudio",
+  "pandas",
   "ssqueezepy",
 ]
 
