@@ -28,15 +28,16 @@ dependencies = [
   "duckdb",
   "einx",
   #"einops>=0.7.0",
-  "librosa>=0.11.0rc0",
+  #"librosa>=0.11.0rc0",
   "matplotlib",
   "scikit-learn",
   "tbb",
   # (torchaudio.io 's apis changed in torchaudio2.9 - transition to torchcodec)
+  #"tbb",
   #"torch",
   #"torchaudio",
-  "pandas",
-  "ssqueezepy",
+  #"pandas",
+  #"ssqueezepy",
 ]
 
 [tool.hatch.metadata]
