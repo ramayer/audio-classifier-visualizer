@@ -36,7 +36,7 @@ class _STFTComponent:
         self.hop_length = hop_length
         self.freq_range_of_interest = freq_range_of_interest
 
-    def get_spectrogram(self, y: np.ndarray, sr: int):
+    def get_spectrogram(self, y: np.ndarray, sr: float):
         spec = librosa.stft(y, n_fft=self.n_fft, win_length=self.n_fft, hop_length=self.hop_length)
         freqs = librosa.fft_frequencies(sr=sr, n_fft=self.n_fft)
         spectral_power = np.abs(spec) ** 2  # type: ignore
@@ -56,9 +56,10 @@ class _WaveletComponent:
     def __init__(
         self,
         chunk_size: int = 65536,
-        decimation_stride: int = 1024,
-        freq_range_of_interest: tuple[float, float] = (100, 1200),
+        decimation_stride: int | None = 1024,
+        freq_range_of_interest: tuple[float, float] | None = (100, 1200),
     ):
+        decimation_stride = decimation_stride or 1024
         self.wavelet = sqz.Wavelet()
         self.logger = logging.getLogger(__name__)
         self.decimation_stride = decimation_stride
@@ -110,7 +111,7 @@ class _WaveletComponent:
         decimated_pwr = einx.mean("a (b c) -> a b", spec_pwr, c=decimation_stride)
         return decimated_amp, decimated_pwr
 
-    def cwt_in_chunks(self, y: np.ndarray, sr: int, wavelet=None, overlap=512):
+    def cwt_in_chunks(self, y: np.ndarray, sr: float, wavelet=None, overlap=512):
         wavelet = wavelet or self.wavelet
         _bounds, scales, freqs = self.get_bounds_scales_and_freqs(y, sr, wavelet)
 
@@ -120,11 +121,11 @@ class _WaveletComponent:
         for start in range(0, len(padded_audio) - 2 * overlap, self.chunk_size):
             end = start + self.chunk_size + 2 * overlap
             chunk = padded_audio[start:end]
-            wx, scales = sqz.cwt(chunk, wavelet, scales=scales)
+            wx, scales = sqz.cwt(chunk, wavelet, scales=scales)  # type: ignore
             if isinstance(wx, torch.Tensor):
                 wx = wx.detach().numpy(force=True)
 
-            spec_for_this_chunk = wx[:, overlap:-overlap]
+            spec_for_this_chunk = wx[:, overlap:-overlap]  # type: ignore
             spectral_power = np.abs(spec_for_this_chunk) ** 2
 
             decimated_tx, decimated_pwr = self.decimate_wavelet_results(spec_for_this_chunk, spectral_power)
@@ -135,7 +136,7 @@ class _WaveletComponent:
         spectral_power = np.concatenate(results_pwr, axis=1)
         return spectral_amplitude, freqs, spectral_power
 
-    def ssq_cwt_in_chunks(self, y: np.ndarray, sr: int, wavelet=None, overlap=4096):
+    def ssq_cwt_in_chunks(self, y: np.ndarray, sr: float, wavelet=None, overlap=4096):
         wavelet = wavelet or self.wavelet
         _bounds, scales, freqs = self.get_bounds_scales_and_freqs(y, sr, wavelet)
 
@@ -145,17 +146,17 @@ class _WaveletComponent:
         for start in range(0, len(padded_audio) - 2 * overlap, self.chunk_size):
             end = start + self.chunk_size + 2 * overlap
             chunk = padded_audio[start:end]
-            tx, _wx, _ssq_freqs, _scales = sqz.ssq_cwt(
+            tx, _wx, _ssq_freqs, _scales = sqz.ssq_cwt(  # type: ignore
                 chunk,
-                self.wavelet,
-                scales=scales,  # 'log-piecewise',
+                self.wavelet,  # type: ignore
+                scales=scales,  # 'log-piecewise', # type: ignore
                 # cache_wavelet=True,
                 # fs=44100,
             )
             if isinstance(tx, torch.Tensor):
                 tx = tx.detach().numpy(force=True)
 
-            spec_for_this_chunk = tx[:, overlap:-overlap]
+            spec_for_this_chunk = tx[:, overlap:-overlap]  # type: ignore
             spectral_power = np.abs(spec_for_this_chunk) ** 2
 
             decimated_tx, decimated_pwr = self.decimate_wavelet_results(spec_for_this_chunk, spectral_power)
@@ -171,7 +172,7 @@ class _SpectrogramComponent:
     def __init__(
         self,
         y: np.ndarray,
-        sr: int,
+        sr: float,
         class_probabilities: torch.Tensor | None = None,
         feature_rate: float | None = None,
         target_class: int | None = None,
@@ -181,7 +182,7 @@ class _SpectrogramComponent:
         try_per_channel_normalization: bool = False,  # noqa: FBT001 FBT002
         clip_outliers: bool = True,  # noqa: FBT001 FBT002
         label_boxes: list[Any] | None = None,
-        freq_range_of_interest=None,
+        freq_range_of_interest: tuple[float, float] | None = None,
     ):
         self.audio = y
         self.sr = sr
@@ -213,7 +214,7 @@ class _SpectrogramComponent:
         self.end_time = self.audio.shape[0] / self.sr
 
     def time_to_score_index(self, t: float) -> int:
-        return t * self.feature_rate
+        return round(t * self.feature_rate)
 
     def score_index_to_time(self, s: int) -> float:
         return s / self.feature_rate
@@ -364,6 +365,7 @@ class _SpectrogramComponent:
                 ax.set_xticklabels(xt)
 
     def plot_spectrogram(self, ax: Axes, method=Subplot.STFT_SPECTROGRAM) -> None:
+        t = None
         if method == Subplot.STFT_SPECTROGRAM:
             spec, freqs, spectral_power = self.stft_component.get_spectrogram(self.audio, self.sr)
 
@@ -385,6 +387,9 @@ class _SpectrogramComponent:
             # t = np.linspace(0, self.duration, len(spectral_power))  # TODO: is this needed?
             t = None
             self._ticks(t, freqs, ax)
+        else:
+            msg = f"invalid method {method}"
+            raise ValueError(msg)
 
         try_pcn = (method == Subplot.STFT_SPECTROGRAM) and self.try_per_channel_normalization
         np_spectral_power = self._normalize_spectral_power(spectral_power, try_pcn, self.clip_outliers)
@@ -431,18 +436,14 @@ class _SpectrogramComponent:
             ax.set_ylabel("Wavelet Hz")
             self._ticks(t, freqs, ax)
             # ax.imshow(s_db, aspect="auto",cmap='magma',extent=[self.start_time, self.end_time, len(freqs),0],)
-            ax.imshow(
-                s_db_rgb,
-                aspect="auto",
-                extent=[self.start_time, self.end_time, len(freqs), 0],
-            )
+            ax.imshow(s_db_rgb, aspect="auto", extent=(self.start_time, self.end_time, len(freqs), 0))
 
         if method == Subplot.STFT_SPECTROGRAM:
             ax.imshow(
                 s_db_rgb,  # .transpose(0, 1, 2),
                 aspect="auto",
                 origin="lower",
-                extent=[self.start_time, self.end_time, freqs[0], freqs[-1]],
+                extent=(self.start_time, self.end_time, freqs[0], freqs[-1]),
             )
             ax.set_ylabel("STFT Hz")
 
@@ -479,7 +480,7 @@ class AudioFileVisualizer:
         audio_file: str | None = None,
         # prefered audio setup
         y: np.ndarray | None = None,
-        sr: int | None = None,
+        sr: float | None = None,
         *,
         # alternative audio setup
         start_time: float = 0,
@@ -488,11 +489,12 @@ class AudioFileVisualizer:
         n_fft: int = 2048,
         freq_range_of_interest: tuple[float, float] | None = None,
         # clasifier/label setup
-        feature_rate: int | None = None,
+        feature_rate: float | None = None,
         class_probabilities: torch.Tensor | None = None,
         class_labels: list[str] | None = None,
         label_boxes: list[Any] | None = None,
         target_class: int | None = None,
+        point_labels: list[tuple[float, float]] | None = None,
         #
         resample_to_sr: int | None = None,
         display_time_offset: int = 0,
@@ -510,6 +512,9 @@ class AudioFileVisualizer:
             self.audio = librosa.resample(self.audio, orig_sr=self.sr, target_sr=resample_to_sr)
             self.sr = resample_to_sr
 
+        if point_labels is None:
+            point_labels = []
+
         self.audio_duration = self.audio.shape[0] / self.sr
         self.display_time_offset = display_time_offset
 
@@ -519,13 +524,14 @@ class AudioFileVisualizer:
         self.class_probabilities = class_probabilities
         self.class_labels = class_labels
         self.target_class = target_class
+        self.point_labels = point_labels
 
         # Compute spectral features
         self.logger.debug("constructing spectrogram")
 
         self.spectrogram_component = _SpectrogramComponent(
             y=self.audio,
-            sr=self.sr,
+            sr=self.sr,  # type: ignore
             class_probabilities=class_probabilities,
             feature_rate=feature_rate,
             target_class=target_class,
@@ -546,24 +552,30 @@ class AudioFileVisualizer:
         }
         self.logger.debug("constructed")
 
-    def time_to_score_index(self, t: float) -> int:
-        return t * self.feature_rate
+    # def time_to_score_index(self, t: float) -> int:
+    #     return round(t * self.feature_rate)
 
-    def score_index_to_time(self, s: int) -> float:
-        return s / self.feature_rate
+    # def score_index_to_time(self, s: int) -> float:
+    #     return s / self.feature_rate
 
-    def interpolate_1d_tensor(self, input_tensor: torch.Tensor, target_length: int) -> torch.Tensor:
-        z = input_tensor[None, None, :]
-        return torch.nn.functional.interpolate(z, target_length, mode="linear")[0][0]
+    # def interpolate_1d_tensor(self, input_tensor: torch.Tensor, target_length: int) -> torch.Tensor:
+    #     z = input_tensor[None, None, :]
+    #     return torch.nn.functional.interpolate(z, target_length, mode="linear")[0][0]
 
     def _plot_waveform(self, ax: Axes) -> None:
         times = np.linspace(0, self.audio_duration, len(self.audio))
         ax.plot(times, self.audio, linewidth=0.5)
+
+        for t, h in self.point_labels:
+            ax.plot(t, h, "ro", markersize=10)
+
         ax.set_ylabel("Amplitude")
         # ax.set_xlim(self.start_time, self.duration)
         # ax.set_xticks(np.arange(0, self.duration + 1, 30))
 
     def _plot_similarities(self, ax: Axes) -> None:
+        if self.class_probabilities is None or self.class_labels is None:
+            return
         similarity = self.class_probabilities[:, self.target_class or 1]
         dissimilarity = 1 - similarity
         time_axis = np.arange(similarity.shape[0]) / self.feature_rate + 1 / self.feature_rate / 2
@@ -580,6 +592,8 @@ class AudioFileVisualizer:
         # ax.set_xticks(np.arange(0, self.duration + 1, 30))
 
     def _plot_class_probabilities(self, ax: Axes) -> None:
+        if self.class_probabilities is None or self.class_labels is None:
+            return
         probs = self.class_probabilities
         labels = self.class_labels
 
@@ -593,6 +607,8 @@ class AudioFileVisualizer:
         # ax.set_xticks(np.arange(0, self.duration + 1, 30))
 
     def _plot_class_probability_lines(self, ax: Axes) -> None:
+        if not self.class_probabilities or not self.class_labels:
+            return
         probs = self.class_probabilities
         labels = self.class_labels
 
@@ -612,9 +628,7 @@ class AudioFileVisualizer:
         intervals = {1: 0.25, 3: 0.5, 10: 1, 60: 5, 300: 30, 600: 60, 3600: 300, 7200: 600, 86400: 3600}
         return next((v for k, v in intervals.items() if duration <= k), 7200)
 
-    def generate_plot(
-        self, height: float = 1280 / 100, width: float = 1920 / 100, save_file: str | None = None
-    ) -> None:
+    def generate_plot(self, height: float = 1280 / 100, width: float = 1920 / 100, save_file: str | None = None) -> Any:
         plt.ioff()
         font_size = width * 10 / (1920 / 100)  # font size 10 looks good on that sized plot
         plt.rc("font", size=font_size)
@@ -626,9 +640,9 @@ class AudioFileVisualizer:
             enabled_subplots.discard(Subplot.CLASS_PROBABILITIES)
             enabled_subplots.discard(Subplot.CLASS_PROBABILITY_LINES)
 
-        n_subplots = len(enabled_subplots)
+        # n_subplots = len(enabled_subplots)
         height_ratios = [
-            1 if Subplot.WAVEFORM in enabled_subplots else 0,
+            2 if Subplot.WAVEFORM in enabled_subplots else 0,
             3 if Subplot.STFT_SPECTROGRAM in enabled_subplots else 0,
             3 if Subplot.WAVELET_SPECTROGRAM in enabled_subplots else 0,
             1 if Subplot.SIMILARITIES in enabled_subplots else 0,
@@ -639,40 +653,43 @@ class AudioFileVisualizer:
 
         gs = {"height_ratios": height_ratios}
         self.fig, self.axes = plt.subplots(len(height_ratios), 1, sharex=True, figsize=(width, height), gridspec_kw=gs)
-        for i in range(len(height_ratios)):
-            self.axes[i].set_xlim(60, 120)
+
+        self.logger.debug(f"self.axes = {type(self.axes)}")
+        axes = self.axes if isinstance(self.axes, np.ndarray) else [self.axes]
+        # for i in range(len(height_ratios)):
+        #    self.axes[i].set_xlim(60, 120)
 
         subplot_index = 0
         if Subplot.WAVEFORM in enabled_subplots:
             self.logger.debug("WAVEFORM")
-            self._plot_waveform(self.axes[subplot_index])
+            self._plot_waveform(axes[subplot_index])
             subplot_index += 1
         if Subplot.STFT_SPECTROGRAM in enabled_subplots:
             self.logger.debug("STFT_SPECTROGRAM")
-            self.spectrogram_component.plot_spectrogram(self.axes[subplot_index])
+            self.spectrogram_component.plot_spectrogram(axes[subplot_index])
             subplot_index += 1
         if Subplot.WAVELET_SPECTROGRAM in enabled_subplots:
             self.logger.debug("WAVELET_SPECTROGRAM")
-            self.spectrogram_component.plot_spectrogram(self.axes[subplot_index], method=Subplot.WAVELET_SPECTROGRAM)
+            self.spectrogram_component.plot_spectrogram(axes[subplot_index], method=Subplot.WAVELET_SPECTROGRAM)
             subplot_index += 1
         if Subplot.SIMILARITIES in enabled_subplots:
             self.logger.debug("SIMILARITIES")
-            self._plot_similarities(self.axes[subplot_index])
+            self._plot_similarities(axes[subplot_index])
             subplot_index += 1
         if Subplot.CLASS_PROBABILITIES in enabled_subplots:
             self.logger.debug("CLASS_PROBABILITIES")
-            self._plot_class_probabilities(self.axes[subplot_index])
+            self._plot_class_probabilities(axes[subplot_index])
             subplot_index += 1
         if Subplot.CLASS_PROBABILITY_LINES in enabled_subplots:
             self.logger.debug("CLASS_PROBABILITY_LINES")
-            self._plot_class_probability_lines(self.axes[subplot_index])
+            self._plot_class_probability_lines(axes[subplot_index])
 
-        for i in range(n_subplots):
-            self.axes[i].set_xlim(60, 120)
+        # for i in range(n_subplots):
+        #    self.axes[i].set_xlim(60, 120)
 
-        for ax in self.axes:
+        for ax in axes:
             ax.tick_params(axis="x", which="both", bottom=False, top=False, labelbottom=False)
-            # ax.set_xlim(self.start_time, self.end_time)
+            ax.set_xlim(self.start_time, self.end_time)
 
         self.logger.debug("axes formatting")
         display_time_offset = self.display_time_offset
@@ -687,7 +704,7 @@ class AudioFileVisualizer:
             else:  # noqa: RET505 , easier to read with the else
                 return f"{minutes:02}:{seconds:06.3f}" if hours < 1 else f"{hours}:{minutes:02}:{seconds:06.3f}"
 
-        for ax in self.axes[-1:]:
+        for ax in axes[-1:]:
             ax.tick_params(axis="x", which="both", bottom=True, top=False, labelbottom=True)
             ax.set_xlabel("Time")
             tick_interval = self._get_tick_interval(self.end_time - self.start_time)

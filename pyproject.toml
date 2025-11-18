@@ -28,14 +28,16 @@ dependencies = [
   "duckdb",
   "einx",
   #"einops>=0.7.0",
-  "librosa>=0.11.0rc0",
+  #"librosa>=0.11.0rc0",
   "matplotlib",
   "scikit-learn",
   "tbb",
-  "torch",
-  "torchaudio",
-  "pandas",
-  "ssqueezepy",
+  # (torchaudio.io 's apis changed in torchaudio2.9 - transition to torchcodec)
+  #"tbb",
+  #"torch",
+  #"torchaudio",
+  #"pandas",
+  #"ssqueezepy",
 ]
 
 [tool.hatch.metadata]
@@ -49,6 +51,7 @@ Source = "https://github.com/Ron M/audio-classifier-visualizer"
 [project.optional-dependencies]
 test = [
   "elephant-rumble-inference @ git+https://github.com/ramayer/elephant-rumble-inference@v0.9.0-rc1",
+  "pandas"
 ]
 cuda12 = [
   "cupy-cuda12x"
