@@ -6,8 +6,8 @@ import einx
 
 # import einops
 import torch
-#import torchaudio.io as tai
 
+# import torchaudio.io as tai
 from audio_classifier_visualizer.triple_buffered_iterator import TripleBufferedIterator
 
 
@@ -115,6 +115,8 @@ class AudioFileProcessor:
             return reshaped_tensor.to("cpu").detach()
 
     def classify_wave_file_for_rumbles(self, wav_file_path, limit_audio_hours=24):
+        import torchaudio.io as tai  # deprecated
+
         streamer = tai.StreamReader(wav_file_path)
         streamer.add_basic_audio_stream(
             stream_index=0,
