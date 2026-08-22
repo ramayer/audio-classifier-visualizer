@@ -7,7 +7,7 @@ name = "audio-classifier-visualizer"
 dynamic = ["version"]
 description = ''
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 #license = "MIT"
 keywords = []
 authors = [
@@ -16,8 +16,6 @@ authors = [
 classifiers = [
   "Development Status :: 4 - Beta",
   "Programming Language :: Python",
-  "Programming Language :: Python :: 3.8",
-  "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
@@ -25,19 +23,18 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dependencies = [
-  "duckdb",
   "einx",
+  "torch",
   #"einops>=0.7.0",
   #"librosa>=0.11.0rc0",
   "matplotlib",
   "scikit-learn",
-  "tbb",
   # (torchaudio.io 's apis changed in torchaudio2.9 - transition to torchcodec)
   #"tbb",
   #"torch",
   #"torchaudio",
   #"pandas",
-  #"ssqueezepy",
+  "ssqueezepy",
 ]
 
 [tool.hatch.metadata]
@@ -50,6 +47,8 @@ Source = "https://github.com/Ron M/audio-classifier-visualizer"
 
 [project.optional-dependencies]
 test = [
+  "tbb",
+  "duckdb",
   "elephant-rumble-inference @ git+https://github.com/ramayer/elephant-rumble-inference@v0.9.0-rc1",
   "pandas"
 ]
