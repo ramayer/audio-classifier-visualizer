@@ -29,6 +29,14 @@ class ClassifierOutput:
     probabilities: np.ndarray  # (n_windows, n_classes)
     feature_rate: float
     class_labels: list[str]
+    time_offset: float = 0.0
+    """Absolute time (seconds, same coordinate frame as the audio it's paired with)
+    that window index 0 actually starts at. Not necessarily what you sliced at:
+    slicing can only happen at whole-window boundaries, so ``slice_time`` rounds
+    the requested start to the nearest one and records the *actual* rounded time
+    here -- callers that instead assumed the requested start_time exactly would
+    accumulate up to half a window of drift on every slice.
+    """
 
     def __post_init__(self) -> None:
         if self.probabilities.ndim != 2:
@@ -50,17 +58,18 @@ class ClassifierOutput:
         return self.probabilities.shape[1]
 
     def time_to_index(self, t: float) -> int:
-        return round(t * self.feature_rate)
+        return round((t - self.time_offset) * self.feature_rate)
 
     def index_to_time(self, i: int) -> float:
-        return i / self.feature_rate
+        return self.time_offset + i / self.feature_rate
 
     def window_centers(self) -> np.ndarray:
-        """Seconds relative to *this object's own* window 0 -- callers displaying a
-        slice alongside audio that has its own display offset (see
-        ``VisualizationSpec.display_offset``) must add that offset themselves.
+        """Absolute seconds (this object's ``time_offset`` + each window's own
+        center), in the same coordinate frame as the audio it's paired with --
+        directly comparable to a ``VisualizationSpec``'s ``start_time``/``end_time``,
+        no separate offset needs to be added by the caller.
         """
-        return np.arange(self.n_windows) / self.feature_rate + 0.5 / self.feature_rate
+        return self.time_offset + np.arange(self.n_windows) / self.feature_rate + 0.5 / self.feature_rate
 
     def class_index(self, label_or_index: str | int) -> int:
         if isinstance(label_or_index, int):
@@ -74,22 +83,33 @@ class ClassifierOutput:
             probabilities=self.probabilities[start_idx:end_idx].copy(),
             feature_rate=self.feature_rate,
             class_labels=self.class_labels,
+            time_offset=self.index_to_time(start_idx),
         )
 
-    def resample_class_to(self, class_index: int, target_length: int, duration: float | None = None) -> np.ndarray:
+    def resample_class_to(
+        self,
+        class_index: int,
+        target_length: int,
+        duration: float | None = None,
+        start_time: float = 0.0,
+    ) -> np.ndarray:
         """Stretch one class's per-window scores to ``target_length`` samples (e.g. spectrogram width).
 
         Interpolates using each window's *center* time (``window_centers()``, same
         convention as the similarity-line/probability-stack tracks) against each
         destination sample's center time, so the colorized spectrogram lines up with
-        those tracks instead of appearing shifted by half a window early -- the old
-        version placed window ``i`` at ``i/(n-1)`` of the span (ignoring feature_rate
-        and the half-window center offset entirely), which is a different, incompatible
-        time axis from ``window_centers()``.
+        those tracks instead of appearing shifted -- the old version placed window
+        ``i`` at ``i/(n-1)`` of the span (ignoring feature_rate and the half-window
+        center offset entirely), a different, incompatible time axis from
+        ``window_centers()``.
 
-        ``duration`` should be the real-world seconds the destination (target_length)
-        axis spans -- e.g. the displayed audio slice's duration. Defaults to this
-        object's own ``n_windows / feature_rate`` if not given.
+        ``start_time``/``duration`` describe the real-world span the destination
+        (``target_length``) axis covers, in the same coordinate frame as
+        ``window_centers()`` -- e.g. a displayed audio slice's ``start_time`` and
+        duration. Getting ``start_time`` right matters as much as getting
+        ``window_centers()`` right: passing 0.0 for a slice that doesn't itself
+        start at absolute time 0 reintroduces the same kind of misalignment this
+        method exists to avoid.
         """
         scores = self.probabilities[:, class_index]
         if len(scores) == 0:
@@ -97,5 +117,5 @@ class ClassifierOutput:
         if duration is None:
             duration = self.n_windows / self.feature_rate
         src_t = self.window_centers()
-        dst_t = (np.arange(target_length) + 0.5) / target_length * duration
+        dst_t = start_time + (np.arange(target_length) + 0.5) / target_length * duration
         return np.interp(dst_t, src_t, scores)

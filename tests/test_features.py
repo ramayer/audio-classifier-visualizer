@@ -46,7 +46,7 @@ def test_wavelet_chunked_vs_single_chunk_power_is_similar(tone, sr):
     """Splitting into multiple small chunks (vs one big chunk) should not meaningfully
     change the resulting power spectrogram -- this is the core correctness property
     of the chunking/overlap-trim approach ported from the original code."""
-    common_kwargs = dict(decimation_stride=32, freq_range_of_interest=(300, 600))
+    common_kwargs = {"decimation_stride": 32, "freq_range_of_interest": (300, 600)}
     one_chunk = WaveletFeatureExtractor(chunk_size=len(tone) + 8192, **common_kwargs).compute(tone, sr, overlap=512)
     many_chunks = WaveletFeatureExtractor(chunk_size=8192, **common_kwargs).compute(tone, sr, overlap=512)
 

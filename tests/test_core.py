@@ -125,3 +125,46 @@ def test_classifier_output_slice_time():
     co = ClassifierOutput(probabilities=np.arange(20).reshape(10, 2), feature_rate=2.0, class_labels=["a", "b"])
     sliced = co.slice_time(1.0, 3.0)  # indices 2..6
     assert sliced.n_windows == 4
+
+
+def test_classifier_output_slice_time_tracks_actual_rounded_start():
+    """slice_time can only cut at whole-window boundaries. Regression test for a real
+    bug: a zoom start_time that doesn't land on one (e.g. 0.7s at feature_rate=2, which
+    rounds to window index 1 -> actual start 0.5s) must have its slice's window_centers()
+    reflect that *actual* rounded start, not the originally-requested 0.7s."""
+    co = ClassifierOutput(probabilities=np.zeros((10, 1)), feature_rate=2.0, class_labels=["x"])
+    sliced = co.slice_time(0.7, 1.3)
+    assert sliced.time_offset == pytest.approx(0.5)  # round(0.7*2)/2, not 0.7
+    assert sliced.window_centers()[0] == pytest.approx(0.75)  # 0.5 + 0.5*(1/2), absolute
+
+
+def test_window_centers_after_slice_matches_true_original_window_centers():
+    """The window that becomes local index 0 after slicing must report the same
+    center time it had *before* slicing -- i.e. slicing must not shift any window's
+    reported time at all, only select a subrange of them."""
+    feature_rate = 2.0
+    co = ClassifierOutput(probabilities=np.zeros((10, 1)), feature_rate=feature_rate, class_labels=["x"])
+    original_centers = co.window_centers()
+    sliced = co.slice_time(0.7, 10.0)  # rounds to starting at window index 1
+    np.testing.assert_allclose(sliced.window_centers(), original_centers[1:])
+
+
+def test_resample_class_to_with_start_time_matches_narrow_zoom():
+    """End-to-end regression for the reported bug: at a narrow, non-window-aligned
+    zoom range, the resampled color curve's 0.5 crossing must land at the same
+    absolute time as window_centers()' own crossing -- not shifted by the zoom's
+    rounding error."""
+    feature_rate = 2.0
+    probs = np.zeros((4, 2))
+    probs[2:, 1] = 1.0  # true transition at t=1.0s (between window 1 center=.75 and window 2 center=1.25)
+    co = ClassifierOutput(probabilities=probs, feature_rate=feature_rate, class_labels=["other", "target"])
+
+    start_time, end_time = 0.7, 1.3
+    sliced = co.slice_time(start_time, end_time)
+    target_length = 6000
+    duration = end_time - start_time
+    stretched = sliced.resample_class_to(1, target_length=target_length, duration=duration, start_time=start_time)
+    dst_t = start_time + (np.arange(target_length) + 0.5) / target_length * duration
+
+    crossing_idx = np.argmin(np.abs(stretched - 0.5))
+    assert dst_t[crossing_idx] == pytest.approx(1.0, abs=0.01)

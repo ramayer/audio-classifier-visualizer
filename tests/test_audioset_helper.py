@@ -30,5 +30,5 @@ def test_create_label_arrays_rasterizes_intervals(tmp_path, monkeypatch):
 def test_create_label_arrays_handles_no_labels(tmp_path, monkeypatch):
     helper = AudioSetHelper(output_dir=str(tmp_path))
     monkeypatch.setattr(helper, "get_labels_for_a_clip", lambda clip_id: pd.DataFrame(columns=["st", "et", "lbl"]))
-    labels, arr = helper.create_label_arrays("abc_0")
+    labels, _arr = helper.create_label_arrays("abc_0")
     assert labels == []

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 matplotlib = pytest.importorskip("matplotlib")
-matplotlib.use("Agg")
+matplotlib.use("Agg", force=True)
 pytest.importorskip("librosa")
 pytest.importorskip("ssqueezepy")
 soundfile = pytest.importorskip("soundfile")
@@ -97,9 +97,10 @@ def test_wavelet_yaxis_labeled_high_to_low(tone, sr):
 
 
 def test_wavelet_label_box_lands_within_axis_range(tone, sr):
+    from matplotlib.patches import Rectangle
+
     from audio_classifier_visualizer.core.labels import LabelBox
     from audio_classifier_visualizer.features.wavelet import WaveletFeatureExtractor
-    from matplotlib.patches import Rectangle
 
     extractor = WaveletFeatureExtractor(freq_range_of_interest=(300, 600))
     box = LabelBox(start_time=0.1, end_time=0.3, low_freq=400, high_freq=500, text="tone")
@@ -152,12 +153,61 @@ def test_class_probability_stack_legend_does_not_overlap_next_track(tone, sr):
         tracks=(Track.CLASS_PROBABILITY_STACK, Track.SIMILARITY_LINES),
     )
     stack_ax, similarity_ax = fig.axes
-    fig.canvas.draw()
+    # Use an explicit Agg canvas for this measurement rather than trusting whatever
+    # backend happens to be globally active -- some environments (certain uv-managed
+    # venvs, IPython/inline setups, etc.) end up with a generic FigureCanvasBase that
+    # lacks get_renderer() even after matplotlib.use("Agg"), if something imported
+    # pyplot with a different backend first. Agg is also just the right tool here:
+    # we only need pixel geometry, not an actual display.
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    canvas = FigureCanvasAgg(fig)
+    canvas.draw()
+    renderer = canvas.get_renderer()
     legend = stack_ax.get_legend()
     assert legend is not None
-    legend_bbox = legend.get_window_extent(renderer=fig.canvas.get_renderer())
-    similarity_bbox = similarity_ax.get_window_extent(renderer=fig.canvas.get_renderer())
+    legend_bbox = legend.get_window_extent(renderer=renderer)
+    similarity_bbox = similarity_ax.get_window_extent(renderer=renderer)
     # The legend must sit to the right of (not vertically overlapping into) the
     # next track's axes.
     assert legend_bbox.x0 >= similarity_bbox.x1 - 1  # small tolerance for pixel rounding
 
+
+def test_similarity_line_crossing_stable_across_non_aligned_zoom(tone, sr):
+    """Regression test for a reported bug: zooming to a start_time that doesn't land
+    on a classifier window boundary (e.g. 0.7s at feature_rate=2) must not shift
+    where the similarity line crosses 0.5 -- it should match the true transition
+    time regardless of which start_time you happened to zoom to."""
+    feature_rate = 2.0
+    n_windows = 20  # 10s of audio at feature_rate=2
+    probs = np.zeros((n_windows, 2))
+    probs[2:, 1] = 1.0  # true transition at t=1.0s
+    co = ClassifierOutput(probabilities=probs, feature_rate=feature_rate, class_labels=["other", "target"])
+
+    def crossing_time(start_time, end_time):
+        viz = AudioVisualization(y=tone, sr=sr, classifier_output=co)
+        fig = viz.show(start_time=start_time, end_time=end_time, tracks=(Track.SIMILARITY_LINES,), target_class="target")
+        line = fig.axes[0].lines[0]  # similarity (green) line
+        xdata, ydata = np.asarray(line.get_xdata()), np.asarray(line.get_ydata())
+        # The rendered line only has the actual data points; the 0.5 crossing is
+        # visually *between* two of them (drawn as a straight segment), so find it
+        # by interpolating along the line itself rather than searching raw ydata.
+        return float(np.interp(0.5, ydata, xdata))
+
+    # A window-aligned zoom (0.5 IS a window boundary) and a non-aligned one (0.7
+    # is not) should both find the crossing at the same true time, ~1.0s.
+    aligned = crossing_time(0.5, 1.5)
+    non_aligned = crossing_time(0.7, 1.3)
+    assert aligned == pytest.approx(1.0, abs=0.05)
+    assert non_aligned == pytest.approx(1.0, abs=0.05)
+
+
+def test_xlim_matches_requested_range_not_tick_interval(wav_path):
+    """Regression test: sharex=True can silently re-expand xlim to the next tick
+    interval when set_xticks is called with out-of-range tick locations -- the
+    displayed range must stay exactly what was requested (0.7, 1.3), not snap out
+    to (0.5, 1.5) to fit a round tick interval."""
+    viz = AudioVisualization(audio_file=wav_path)
+    fig = viz.show(start_time=0.7, end_time=1.3, tracks=(Track.WAVEFORM,))
+    for ax in fig.axes:
+        assert ax.get_xlim() == pytest.approx((0.7, 1.3), abs=1e-6)

@@ -67,6 +67,13 @@ class MatplotlibRenderer:
         interval = _tick_interval(spec.end_time - spec.start_time)
         last_ax.set_xticks(np.arange(spec.start_time - (spec.start_time % interval), spec.end_time + interval, interval))
         last_ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _pos: spec.audio.time_axis.format_relative(x)))
+        # set_xticks on a sharex=True group re-expands the shared xlim to include any
+        # tick location outside the current view (confirmed against matplotlib
+        # directly) -- undoing the set_xlim() calls above. Re-assert it last, after
+        # ticks are placed, so the displayed range matches what was actually
+        # requested rather than snapping out to the next tick interval.
+        for ax in axes:
+            ax.set_xlim(spec.start_time, spec.end_time)
 
         fig.suptitle(spec.title, fontsize=16, ha="left", x=0)
         right_margin = 0.85 if Track.CLASS_PROBABILITY_STACK in tracks else 0.98
@@ -111,7 +118,9 @@ class MatplotlibRenderer:
         if co is None:
             return None, None
         target_class = co.class_index(spec.target_class if spec.target_class is not None else 1)
-        similarity = co.resample_class_to(target_class, target_length, duration=spec.audio.duration)
+        similarity = co.resample_class_to(
+            target_class, target_length, duration=spec.audio.duration, start_time=spec.display_offset
+        )
         dissimilarity = 1.0 - similarity
         return similarity, dissimilarity
 
@@ -211,14 +220,18 @@ class MatplotlibRenderer:
         target_class = co.class_index(spec.target_class if spec.target_class is not None else 1)
         similarity = co.probabilities[:, target_class]
         dissimilarity = 1 - similarity
-        t = co.window_centers() + spec.display_offset
+        # window_centers() is already absolute (includes co.time_offset, which is the
+        # *actual* rounded-to-window-boundary start of this slice) -- do not add
+        # spec.display_offset here too, that would double-count it and reintroduce
+        # the quantization-drift bug this was fixed for.
+        t = co.window_centers()
         ax.plot(t, similarity, color="tab:green")
         ax.plot(t, dissimilarity, color="tab:red")
         ax.set_ylabel(co.class_labels[target_class])
 
     def _draw_class_probability_stack(self, ax, spec: VisualizationSpec) -> None:
         co = spec.classifier_output
-        t = co.window_centers() + spec.display_offset
+        t = co.window_centers()  # already absolute -- see _draw_similarity_lines
         ax.stackplot(t, co.probabilities.T, labels=co.class_labels)
         # Right-of-axes (not below): a legend anchored below its own axes only has
         # room when that axes happens to be the bottommost thing on the figure --
