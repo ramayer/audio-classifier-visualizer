@@ -25,8 +25,9 @@ wavelet = ["ssqueezepy>=0.6.5", "einx>=0.2"]
 plot = ["matplotlib>=3.8"]
 gpu = ["torch", "cupy-cuda13x"]
 all = ["audio-classifier-visualizer[stft,wavelet,plot]"]
-audioset = ["duckdb>=1.0", "pandas>=2.0", "einx>=0.2", "librosa>=0.10"]
+audioset = ["duckdb>=1.0", "pandas>=2.0", "einx>=0.2", "librosa>=0.10", "tqdm", "yt-dlp"]
 dev = ["audio-classifier-visualizer[all,audioset]", "pytest>=8.0", "pytest-cov", "ruff"]
+yamnet = ["tensorflow","tensorflow-hub"] # fails on python 3.14 for now (tensorflow breaks)
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/audio_classifier_visualizer"]

@@ -139,3 +139,25 @@ def test_clip_outliers_flag_reaches_spec(tone, sr):
     assert spec_on.clip_outliers is True
     assert spec_off.clip_outliers is False
 
+
+def test_class_probability_stack_legend_does_not_overlap_next_track(tone, sr):
+    """Regression test: with CLASS_PROBABILITY_STACK not the last track, its legend
+    must not land in the same figure region as the track drawn after it."""
+    n_windows = 20
+    probs = np.random.default_rng(0).dirichlet(np.ones(3), n_windows)
+    co = ClassifierOutput(probabilities=probs, feature_rate=n_windows / 5.0, class_labels=["a", "b", "c"])
+    viz = AudioVisualization(y=tone, sr=sr, classifier_output=co)
+    fig = viz.show(
+        end_time=5.0,
+        tracks=(Track.CLASS_PROBABILITY_STACK, Track.SIMILARITY_LINES),
+    )
+    stack_ax, similarity_ax = fig.axes
+    fig.canvas.draw()
+    legend = stack_ax.get_legend()
+    assert legend is not None
+    legend_bbox = legend.get_window_extent(renderer=fig.canvas.get_renderer())
+    similarity_bbox = similarity_ax.get_window_extent(renderer=fig.canvas.get_renderer())
+    # The legend must sit to the right of (not vertically overlapping into) the
+    # next track's axes.
+    assert legend_bbox.x0 >= similarity_bbox.x1 - 1  # small tolerance for pixel rounding
+

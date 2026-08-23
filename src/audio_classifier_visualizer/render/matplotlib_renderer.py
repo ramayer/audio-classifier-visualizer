@@ -69,7 +69,8 @@ class MatplotlibRenderer:
         last_ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _pos: spec.audio.time_axis.format_relative(x)))
 
         fig.suptitle(spec.title, fontsize=16, ha="left", x=0)
-        plt.subplots_adjust(top=0.93, left=0.06)
+        right_margin = 0.85 if Track.CLASS_PROBABILITY_STACK in tracks else 0.98
+        plt.subplots_adjust(top=0.93, left=0.06, right=right_margin)
 
         if save_file:
             fig.savefig(save_file, bbox_inches="tight", pad_inches=0.02)
@@ -219,5 +220,10 @@ class MatplotlibRenderer:
         co = spec.classifier_output
         t = co.window_centers() + spec.display_offset
         ax.stackplot(t, co.probabilities.T, labels=co.class_labels)
-        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.25), ncol=4, prop={"size": 8})
+        # Right-of-axes (not below): a legend anchored below its own axes only has
+        # room when that axes happens to be the bottommost thing on the figure --
+        # with any other track after it (e.g. SIMILARITY_LINES), that track's own
+        # axes gets drawn right over the legend. Right-side placement uses space
+        # reserved once, in `render()`, regardless of track order.
+        ax.legend(loc="center left", bbox_to_anchor=(1.01, 0.5), prop={"size": 8})
         ax.set_ylabel("Cls Prob")
