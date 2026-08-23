@@ -110,7 +110,7 @@ class MatplotlibRenderer:
         if co is None:
             return None, None
         target_class = co.class_index(spec.target_class if spec.target_class is not None else 1)
-        similarity = co.resample_class_to(target_class, target_length)
+        similarity = co.resample_class_to(target_class, target_length, duration=spec.audio.duration)
         dissimilarity = 1.0 - similarity
         return similarity, dissimilarity
 

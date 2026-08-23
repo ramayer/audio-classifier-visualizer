@@ -109,6 +109,8 @@ class AudioVisualization:
         tracks: tuple[Track, ...] = DEFAULT_TRACKS,
         target_class: str | int | None = None,
         colorize_style: str = "bright",
+        per_channel_normalize: bool = True,
+        clip_outliers: bool = True,
         title: str = "",
     ) -> VisualizationSpec:
         if end_time is None:
@@ -132,6 +134,8 @@ class AudioVisualization:
             stft=self.stft,
             wavelet=self.wavelet,
             colorize_style=colorize_style,
+            per_channel_normalize=per_channel_normalize,
+            clip_outliers=clip_outliers,
         )
 
     def show(
@@ -142,6 +146,8 @@ class AudioVisualization:
         tracks: tuple[Track, ...] = DEFAULT_TRACKS,
         target_class: str | int | None = None,
         colorize_style: str = "bright",
+        per_channel_normalize: bool = True,
+        clip_outliers: bool = True,
         title: str = "",
         width: float = 19.2,
         height: float = 12.8,
@@ -153,6 +159,8 @@ class AudioVisualization:
             tracks=tracks,
             target_class=target_class,
             colorize_style=colorize_style,
+            per_channel_normalize=per_channel_normalize,
+            clip_outliers=clip_outliers,
             title=title,
         )
         return self.renderer.render(spec, width=width, height=height, save_file=save_file)

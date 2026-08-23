@@ -113,3 +113,29 @@ def test_wavelet_label_box_lands_within_axis_range(tone, sr):
         assert 0 <= r.get_y() <= 10_000  # generous bound; specifically NOT ~400-500 landing far off an index axis
         assert r.get_y() < 1000  # sanity: wavelet extractor here has well under 1000 rows
 
+
+def test_per_channel_normalize_flag_reaches_spec(tone, sr):
+    viz = AudioVisualization(y=tone, sr=sr)
+    spec_on = viz.build_spec(end_time=1.0, per_channel_normalize=True)
+    spec_off = viz.build_spec(end_time=1.0, per_channel_normalize=False)
+    assert spec_on.per_channel_normalize is True
+    assert spec_off.per_channel_normalize is False
+
+
+def test_per_channel_normalize_changes_rendered_power(tone, sr):
+    """Not just plumbing -- confirm the flag actually changes what gets drawn."""
+    viz = AudioVisualization(y=tone, sr=sr)
+    fig_on = viz.show(end_time=1.0, tracks=(Track.STFT_SPECTROGRAM,), per_channel_normalize=True)
+    fig_off = viz.show(end_time=1.0, tracks=(Track.STFT_SPECTROGRAM,), per_channel_normalize=False)
+    img_on = fig_on.axes[0].get_images()[0].get_array()
+    img_off = fig_off.axes[0].get_images()[0].get_array()
+    assert not np.allclose(np.asarray(img_on), np.asarray(img_off))
+
+
+def test_clip_outliers_flag_reaches_spec(tone, sr):
+    viz = AudioVisualization(y=tone, sr=sr)
+    spec_on = viz.build_spec(end_time=1.0, clip_outliers=True)
+    spec_off = viz.build_spec(end_time=1.0, clip_outliers=False)
+    assert spec_on.clip_outliers is True
+    assert spec_off.clip_outliers is False
+

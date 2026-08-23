@@ -99,6 +99,28 @@ def test_classifier_output_resample_matches_endpoints():
     assert stretched[-1] == pytest.approx(1.0, abs=1e-6)
 
 
+def test_classifier_output_resample_aligns_with_window_centers():
+    """Regression test: a step at the boundary between window i and i+1 should cross
+    0.5 at the *midpoint between their centers*, matching window_centers()/the
+    similarity-line track -- not at the boundary's own raw time (the old, buggy
+    behavior, which put the 0.5 crossing half a window too early)."""
+    feature_rate = 2.0  # 0.5s windows, matching the notebook scenario that surfaced this
+    probs = np.zeros((4, 2))
+    probs[2:, 1] = 1.0  # step up at window index 2 (raw window-start time == 1.0s)
+    co = ClassifierOutput(probabilities=probs, feature_rate=feature_rate, class_labels=["other", "target"])
+
+    duration = 2.0
+    target_length = 2000  # fine enough to localize the crossing precisely
+    stretched = co.resample_class_to(1, target_length=target_length, duration=duration)
+    dst_t = (np.arange(target_length) + 0.5) / target_length * duration
+
+    # window 1 center = 0.75s (value 0), window 2 center = 1.25s (value 1) ->
+    # linear crossing of 0.5 lands exactly at t=1.0s, not at t=0.75s (a naive
+    # "index/(n-1)-of-span" mapping) and not smeared to some other point.
+    crossing_idx = np.argmin(np.abs(stretched - 0.5))
+    assert dst_t[crossing_idx] == pytest.approx(1.0, abs=0.01)
+
+
 def test_classifier_output_slice_time():
     co = ClassifierOutput(probabilities=np.arange(20).reshape(10, 2), feature_rate=2.0, class_labels=["a", "b"])
     sliced = co.slice_time(1.0, 3.0)  # indices 2..6

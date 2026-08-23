@@ -76,13 +76,26 @@ class ClassifierOutput:
             class_labels=self.class_labels,
         )
 
-    def resample_class_to(self, class_index: int, target_length: int) -> np.ndarray:
-        """Stretch one class's per-window scores to ``target_length`` samples (e.g. spectrogram width)."""
+    def resample_class_to(self, class_index: int, target_length: int, duration: float | None = None) -> np.ndarray:
+        """Stretch one class's per-window scores to ``target_length`` samples (e.g. spectrogram width).
+
+        Interpolates using each window's *center* time (``window_centers()``, same
+        convention as the similarity-line/probability-stack tracks) against each
+        destination sample's center time, so the colorized spectrogram lines up with
+        those tracks instead of appearing shifted by half a window early -- the old
+        version placed window ``i`` at ``i/(n-1)`` of the span (ignoring feature_rate
+        and the half-window center offset entirely), which is a different, incompatible
+        time axis from ``window_centers()``.
+
+        ``duration`` should be the real-world seconds the destination (target_length)
+        axis spans -- e.g. the displayed audio slice's duration. Defaults to this
+        object's own ``n_windows / feature_rate`` if not given.
+        """
         scores = self.probabilities[:, class_index]
         if len(scores) == 0:
             return np.zeros(target_length)
-        if len(scores) == target_length:
-            return scores.astype(float)
-        src_x = np.linspace(0.0, 1.0, num=len(scores))
-        dst_x = np.linspace(0.0, 1.0, num=target_length)
-        return np.interp(dst_x, src_x, scores)
+        if duration is None:
+            duration = self.n_windows / self.feature_rate
+        src_t = self.window_centers()
+        dst_t = (np.arange(target_length) + 0.5) / target_length * duration
+        return np.interp(dst_t, src_t, scores)
