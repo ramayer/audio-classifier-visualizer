@@ -66,6 +66,18 @@ def test_slice_cache_reuses_loaded_signal(wav_path):
     assert sig1 is sig2
 
 
+def test_target_sr_resamples_file_audio(wav_path, sr):
+    viz = AudioVisualization(audio_file=wav_path, target_sr=sr / 2)
+    sig = viz._load_slice(0.0, 1.0)
+    assert sig.sr == pytest.approx(sr / 2)
+
+
+def test_target_sr_resamples_preloaded_array(tone, sr):
+    viz = AudioVisualization(y=tone, sr=sr, target_sr=sr / 2)
+    fig = viz.show(end_time=1.0, tracks=(Track.WAVEFORM,))
+    assert fig is not None
+
+
 def test_duration_does_not_require_full_load(wav_path, tone, sr):
     viz = AudioVisualization(audio_file=wav_path)
     assert viz.duration == pytest.approx(len(tone) / sr, abs=1e-3)

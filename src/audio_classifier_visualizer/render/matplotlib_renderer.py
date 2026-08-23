@@ -76,6 +76,12 @@ class MatplotlibRenderer:
             plt.close(fig)
             logger.info("saved visualization to %s", save_file)
             return None
+        # Close from pyplot's global figure registry so Jupyter's inline-backend
+        # auto-display hook doesn't render this figure a second time in addition
+        # to the return-value repr -- the Figure object itself still renders fine
+        # (its canvas isn't touched by plt.close), so returning it for display
+        # still works.
+        plt.close(fig)
         return fig
 
     def _draw_track(self, ax, track: Track, spec: VisualizationSpec) -> None:

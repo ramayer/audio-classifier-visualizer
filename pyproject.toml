@@ -23,7 +23,7 @@ dependencies = [
 stft = ["librosa>=0.10"]
 wavelet = ["ssqueezepy>=0.6.5", "einx>=0.2"]
 plot = ["matplotlib>=3.8"]
-gpu = ["cupy-cuda12x"]
+gpu = ["torch", "cupy-cuda13x"]
 all = ["audio-classifier-visualizer[stft,wavelet,plot]"]
 dev = ["audio-classifier-visualizer[all]", "pytest>=8.0", "pytest-cov", "ruff"]
 

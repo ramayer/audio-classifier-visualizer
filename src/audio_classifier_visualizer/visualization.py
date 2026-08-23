@@ -43,12 +43,19 @@ class AudioVisualization:
         stft: STFTFeatureExtractor | None = None,
         wavelet: WaveletFeatureExtractor | None = None,
         renderer: Renderer | None = None,
+        target_sr: float | None = None,
     ) -> None:
         if audio_file is None and (y is None or sr is None):
             msg = "Provide either audio_file, or both y and sr."
             raise ValueError(msg)
         self._audio_file = audio_file
+        self._target_sr = target_sr
         self._preloaded_signal = None if audio_file else AudioSignal(samples=y, sr=sr, source_path=None)
+        if target_sr is not None and self._preloaded_signal is not None and target_sr != sr:
+            import librosa
+
+            resampled = librosa.resample(self._preloaded_signal.samples, orig_sr=sr, target_sr=target_sr)
+            self._preloaded_signal = AudioSignal(samples=resampled, sr=target_sr, source_path=None)
         if absolute_start is not None and self._preloaded_signal is not None:
             from audio_classifier_visualizer.core.time_axis import TimeAxis
 
@@ -80,7 +87,13 @@ class AudioVisualization:
         if key in self._slice_cache:
             return self._slice_cache[key]
         if self._audio_file is not None:
-            signal = load_audio(self._audio_file, start_time=start_time, end_time=end_time, absolute_start=self._absolute_start)
+            signal = load_audio(
+                self._audio_file,
+                start_time=start_time,
+                end_time=end_time,
+                absolute_start=self._absolute_start,
+                target_sr=self._target_sr,
+            )
         else:
             signal = self._preloaded_signal.slice_time(start_time, end_time)
         if len(self._slice_cache) >= _CACHE_SIZE:
