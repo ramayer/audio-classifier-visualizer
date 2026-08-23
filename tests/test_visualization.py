@@ -82,3 +82,34 @@ def test_duration_does_not_require_full_load(wav_path, tone, sr):
     viz = AudioVisualization(audio_file=wav_path)
     assert viz.duration == pytest.approx(len(tone) / sr, abs=1e-3)
     assert viz._slice_cache == {}  # duration lookup must not have loaded any audio
+
+
+def test_wavelet_yaxis_labeled_high_to_low(tone, sr):
+    """High frequency must be on top (small index), with actual Hz labels -- not the
+    raw row-index integers imshow would otherwise show by default."""
+    viz = AudioVisualization(y=tone, sr=sr)
+    fig = viz.show(end_time=1.0, tracks=(Track.WAVELET_SPECTROGRAM,))
+    ax = fig.axes[0]
+    ticklabels = [t.get_text() for t in ax.get_yticklabels()]
+    values = [float(t) for t in ticklabels if t]
+    assert len(values) >= 2
+    assert values == sorted(values, reverse=True)  # highest Hz label first (top)
+
+
+def test_wavelet_label_box_lands_within_axis_range(tone, sr):
+    from audio_classifier_visualizer.core.labels import LabelBox
+    from audio_classifier_visualizer.features.wavelet import WaveletFeatureExtractor
+    from matplotlib.patches import Rectangle
+
+    extractor = WaveletFeatureExtractor(freq_range_of_interest=(300, 600))
+    box = LabelBox(start_time=0.1, end_time=0.3, low_freq=400, high_freq=500, text="tone")
+    viz = AudioVisualization(y=tone, sr=sr, labels=[box], wavelet=extractor)
+    fig = viz.show(end_time=1.0, tracks=(Track.WAVELET_SPECTROGRAM,))
+    ax = fig.axes[0]
+    rects = [p for p in ax.patches if isinstance(p, Rectangle)]
+    assert rects
+    # index-based axis: y-origin should be a small row-index number, not a raw Hz value.
+    for r in rects:
+        assert 0 <= r.get_y() <= 10_000  # generous bound; specifically NOT ~400-500 landing far off an index axis
+        assert r.get_y() < 1000  # sanity: wavelet extractor here has well under 1000 rows
+

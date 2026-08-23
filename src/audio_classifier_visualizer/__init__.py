@@ -16,9 +16,16 @@ from audio_classifier_visualizer.render.matplotlib_renderer import MatplotlibRen
 from audio_classifier_visualizer.render.spec import Track, VisualizationSpec
 from audio_classifier_visualizer.visualization import AudioVisualization
 
+try:
+    # Optional: needs the 'audioset' extra (duckdb, pandas, einx, librosa).
+    from audio_classifier_visualizer.helpers.audioset_helper import AudioSetHelper
+except ImportError:
+    AudioSetHelper = None
+
 __version__ = "1.0.0"
 
 __all__ = [
+    "AudioSetHelper",
     "AudioSignal",
     "AudioVisualization",
     "ClassifierOutput",

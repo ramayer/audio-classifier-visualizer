@@ -144,19 +144,44 @@ class MatplotlibRenderer:
             0,
         )
         ax.imshow(rgb, aspect="auto", origin=origin, extent=extent)
+        if wavelet:
+            self._label_log_freq_axis(ax, freqs)
 
         if spec.labels:
             self._draw_label_boxes(ax, spec, freqs, wavelet=wavelet)
 
+    def _label_log_freq_axis(self, ax, freqs: np.ndarray, n_ticks: int = 8) -> None:
+        """Wavelet rows are evenly spaced by index, not by Hz (the whole point of a
+        log-piecewise CWT scale is that frequency resolution is finer at low
+        frequencies) -- so unlike the STFT axis (a plain linear Hz extent), we pick a
+        handful of index positions and label them with their *actual* (non-uniformly
+        spaced) Hz values. ``freqs`` is expected high-to-low (index 0 == top row ==
+        highest frequency), matching the imshow extent above.
+        """
+        idxs = np.linspace(0, len(freqs) - 1, n_ticks).astype(int)
+        labels = [f"{freqs[i]:.0f}" for i in idxs]
+        ax.set_yticks(idxs)
+        ax.set_yticklabels(labels)
+
     def _draw_label_boxes(self, ax, spec: VisualizationSpec, freqs, *, wavelet: bool) -> None:
         from matplotlib import patches
 
-        vert_offset = (freqs[-1] - freqs[0]) / 25 if not wavelet else 0
+        vert_offset = (freqs[-1] - freqs[0]) / 25 if not wavelet else (len(freqs) / 25)
         for box in spec.labels:
             if not box.overlaps(spec.start_time, spec.end_time):
                 continue
-            xy = (box.start_time, box.low_freq)
-            width_, height_ = box.duration, box.high_freq - box.low_freq
+            if wavelet:
+                # The wavelet axis is index-based (see _label_log_freq_axis), so Hz
+                # values from the label need mapping to a (fractional) row index
+                # before they mean anything as a y-coordinate here.
+                low_y = self._freq_to_index(box.low_freq, freqs)
+                high_y = self._freq_to_index(box.high_freq, freqs)
+                xy = (box.start_time, min(low_y, high_y))
+                height_ = abs(high_y - low_y)
+            else:
+                xy = (box.start_time, box.low_freq)
+                height_ = box.high_freq - box.low_freq
+            width_ = box.duration
             for linewidth, edgecolor in ((3, (0, 0, 0)), (1, (0, 1, 1))):
                 ax.add_patch(
                     patches.Rectangle(xy, width_, height_, linewidth=linewidth, edgecolor=edgecolor, facecolor="none")
@@ -172,6 +197,13 @@ class MatplotlibRenderer:
                     color="white",
                     bbox={"boxstyle": "round,pad=0.3", "edgecolor": "cyan", "facecolor": "black", "alpha": 0.7},
                 )
+
+    @staticmethod
+    def _freq_to_index(freq_hz: float, freqs: np.ndarray) -> float:
+        """Map a Hz value to its (fractional) row index in a high-to-low ``freqs`` array."""
+        ascending_freqs = freqs[::-1]
+        ascending_idxs = np.arange(len(freqs) - 1, -1, -1)
+        return float(np.interp(freq_hz, ascending_freqs, ascending_idxs))
 
     def _draw_similarity_lines(self, ax, spec: VisualizationSpec) -> None:
         co = spec.classifier_output
