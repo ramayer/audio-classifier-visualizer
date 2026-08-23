@@ -4,113 +4,35 @@ build-backend = "hatchling.build"
 
 [project]
 name = "audio-classifier-visualizer"
-dynamic = ["version"]
-description = ''
+version = "1.0.0"
+description = "Time-aligned visualization of waveforms, spectrograms, labels, and classifier output for long audio files."
 readme = "README.md"
-requires-python = ">=3.8"
-#license = "MIT"
-keywords = []
-authors = [
-  { name = "Ron M", email = "ramayer+git@gmail.com" },
-]
-classifiers = [
-  "Development Status :: 4 - Beta",
-  "Programming Language :: Python",
-  "Programming Language :: Python :: 3.8",
-  "Programming Language :: Python :: 3.9",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
-  "Programming Language :: Python :: 3.12",
-  "Programming Language :: Python :: Implementation :: CPython",
-  "Programming Language :: Python :: Implementation :: PyPy",
-]
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Ron Mayer" }]
+
+# Deliberately minimal: no torch, no torchaudio/torchcodec. Loading is
+# soundfile-based; STFT and CWT are optional extras since not every use
+# of the core data model / facade needs either.
 dependencies = [
-  "duckdb",
-  "einx",
-  #"einops>=0.7.0",
-  #"librosa>=0.11.0rc0",
-  "matplotlib",
-  "scikit-learn",
-  "tbb",
-  # (torchaudio.io 's apis changed in torchaudio2.9 - transition to torchcodec)
-  #"tbb",
-  #"torch",
-  #"torchaudio",
-  #"pandas",
-  #"ssqueezepy",
+    "numpy>=1.24",
+    "soundfile>=0.12",
 ]
-
-[tool.hatch.metadata]
-allow-direct-references = true
-
-[project.urls]
-Documentation = "https://github.com/Ron M/audio-classifier-visualizer#readme"
-Issues = "https://github.com/Ron M/audio-classifier-visualizer/issues"
-Source = "https://github.com/Ron M/audio-classifier-visualizer"
 
 [project.optional-dependencies]
-test = [
-  "elephant-rumble-inference @ git+https://github.com/ramayer/elephant-rumble-inference@v0.9.0-rc1",
-  "pandas"
-]
-cuda12 = [
-  "cupy-cuda12x"
-]
+stft = ["librosa>=0.10"]
+wavelet = ["ssqueezepy>=0.6.5", "einx>=0.2"]
+plot = ["matplotlib>=3.8"]
+gpu = ["cupy-cuda12x"]
+all = ["audio-classifier-visualizer[stft,wavelet,plot]"]
+dev = ["audio-classifier-visualizer[all]", "pytest>=8.0", "pytest-cov", "ruff"]
 
-[tool.hatch.envs.hatch-test]
-features = [
-  "test"
-]
+[tool.hatch.build.targets.wheel]
+packages = ["src/audio_classifier_visualizer"]
 
-[tool.hatch.version]
-path = "src/audio_classifier_visualizer/__about__.py"
+[tool.ruff]
+line-length = 120
+target-version = "py310"
 
-[tool.hatch.envs.types]
-extra-dependencies = [
-  "mypy>=1.0.0",
-]
-[tool.hatch.envs.types.scripts]
-check = "mypy --install-types --non-interactive {args:src/audio_classifier_visualizer tests}"
-
-[tool.coverage.run]
-source_pkgs = ["audio_classifier_visualizer", "tests"]
-branch = true
-parallel = true
-omit = [
-  "src/audio_classifier_visualizer/__about__.py",
-]
-
-[tool.coverage.paths]
-audio_classifier_visualizer = ["src/audio_classifier_visualizer", "*/audio-classifier-visualizer/src/audio_classifier_visualizer"]
-tests = ["tests", "*/audio-classifier-visualizer/tests"]
-
-[tool.coverage.report]
-exclude_lines = [
-  "no cov",
-  "if __name__ == .__main__.:",
-  "if TYPE_CHECKING:",
-]
-
-[tool.hatch.envs.test.scripts]
-test = "pytest {args:tests}"
-test-cov = "pytest --cov {args:tests}"
-
-[tool.ruff.lint.extend-per-file-ignores]
-"src/audio_classifier_visualizer/main.py"= ["T201"]
-"tests/*" = [
-  "T201", # print() is acceptable in tests
-]
-"src/*" = [
-  "G004", # f-strings are the most convenient for many log messages
-]
-
-[tool.hatch.build.targets.sdist]
-include = [
-  "pkg/*.py",
-  "/tests",
-]
-exclude = [
-  "*.json",
-  "pkg/_compat.py",
-  "/notebooks"
-]
+[tool.pytest.ini_options]
+testpaths = ["tests"]
