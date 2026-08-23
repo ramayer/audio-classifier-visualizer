@@ -1,12 +1,19 @@
 # audio-classifier-visualizer
 
-Time-aligned visualization of waveforms, spectrograms, label annotations, and
+A Python library for visualizing audio classifier outputs, including waveforms, spectrograms, and class probabilities over time.   Time-aligned visualization of waveforms, spectrograms, label annotations, and
 classifier output — built for long (multi-hour to 24×7) audio recordings, with
 efficient chunked/decimated CWT spectrograms and pluggable rendering.
+
+This library was extracted from the [elephant-rumble-inference](https://github.com/ramayer/elephant-rumble-inference) project, which uses deep learning to detect and classify elephant rumble vocalizations in audio recordings.
+
+## Example
+
+<img src="docs/elephant_sound_visualization.png" width=800>
 
 ## Install
 
 ```bash
+pip install git+https://github.com/ramayer/audio-classifier-visualizer[all]
 pip install audio-classifier-visualizer[all]        # STFT + wavelet + matplotlib
 pip install audio-classifier-visualizer[stft,plot]  # STFT only, no ssqueezepy
 pip install audio-classifier-visualizer[wavelet]     # just the CWT feature extractor, no plotting
