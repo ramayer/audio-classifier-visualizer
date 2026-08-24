@@ -115,6 +115,8 @@ class MatplotlibRenderer:
         y = spec.audio.as_mono() if spec.audio.n_channels > 1 else spec.audio.channel(0)
         times = np.linspace(spec.start_time, spec.end_time, len(y))
         ax.plot(times, y, linewidth=0.5)
+        for point in spec.point_labels:
+            ax.plot(point.time, point.amplitude, "ro", markersize=10)
         ax.set_ylabel("Amplitude")
 
     def _resampled_confidence(self, spec: VisualizationSpec, target_length: int):

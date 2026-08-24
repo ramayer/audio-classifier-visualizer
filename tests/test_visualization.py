@@ -213,3 +213,29 @@ def test_xlim_matches_requested_range_not_tick_interval(wav_path):
     fig = viz.show(start_time=0.7, end_time=1.3, tracks=(Track.WAVEFORM,))
     for ax in fig.axes:
         assert ax.get_xlim() == pytest.approx((0.7, 1.3), abs=1e-6)
+
+
+def test_point_labels_render_on_waveform_and_are_time_filtered(tone, sr):
+    from audio_classifier_visualizer.core.labels import PointLabel
+
+    in_range_point = PointLabel(time=2.0, amplitude=0.5, text="in range")
+    out_of_range_point = PointLabel(time=8.0, amplitude=0.5, text="out of range")
+    viz = AudioVisualization(y=tone, sr=sr, point_labels=[in_range_point, out_of_range_point])
+
+    fig = viz.show(start_time=0.0, end_time=3.0, tracks=(Track.WAVEFORM,))
+    ax = fig.axes[0]
+    # waveform line + one Line2D marker per in-range point label ("ro" markers are
+    # also Line2D objects); the out-of-range point must not add one.
+    dot_lines = [line for line in ax.get_lines() if line.get_marker() == "o"]
+    assert len(dot_lines) == 1
+    assert dot_lines[0].get_xdata()[0] == pytest.approx(2.0)
+    assert dot_lines[0].get_ydata()[0] == pytest.approx(0.5)
+
+
+def test_point_labels_build_spec_filters_by_range(tone, sr):
+    from audio_classifier_visualizer.core.labels import PointLabel
+
+    points = [PointLabel(time=t, amplitude=0.0) for t in (0.5, 2.0, 4.5)]
+    viz = AudioVisualization(y=tone, sr=sr, point_labels=points)
+    spec = viz.build_spec(start_time=0.0, end_time=3.0)
+    assert [p.time for p in spec.point_labels] == [0.5, 2.0]
