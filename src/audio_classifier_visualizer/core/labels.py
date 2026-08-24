@@ -45,6 +45,7 @@ class PointLabel:
     time: float
     amplitude: float
     text: str = ""
+    color: str = "red"
 
     def in_range(self, start_time: float, end_time: float) -> bool:
         return start_time <= self.time <= end_time

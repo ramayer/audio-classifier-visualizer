@@ -112,11 +112,43 @@ class MatplotlibRenderer:
             raise ValueError(msg)
 
     def _draw_waveform(self, ax, spec: VisualizationSpec) -> None:
+        from matplotlib.colors import to_rgba
+
         y = spec.audio.as_mono() if spec.audio.n_channels > 1 else spec.audio.channel(0)
         times = np.linspace(spec.start_time, spec.end_time, len(y))
-        ax.plot(times, y, linewidth=0.5)
+        ax.plot(times, y, linewidth=0.5, color="black")
         for point in spec.point_labels:
-            ax.plot(point.time, point.amplitude, "ro", markersize=10)
+            # Thin opaque ring + translucent fill (not a solid dot) so the waveform
+            # underneath the marker stays visible -- a solid marker at the peak
+            # amplitude (the common case) would otherwise sit right on top of the
+            # very feature it's meant to point out.
+            ax.scatter(
+                [point.time],
+                [point.amplitude],
+                s=120,
+                facecolors=[to_rgba(point.color, alpha=0.3)],
+                edgecolors=point.color,
+                linewidths=1.5,
+                zorder=3,
+            )
+            if point.text:
+                # Horizontal offset only (va="center"): a vertical offset would land
+                # above or below depending on which side of the trace the point is
+                # on, and at a local peak the label can end up covering the very
+                # dot it's meant to label. No background box, and text color
+                # matches the marker -- this is meant to read as "this dot's name",
+                # not a separate boxed callout like LabelBox's spectrogram text.
+                ax.annotate(
+                    point.text,
+                    (point.time, point.amplitude),
+                    xytext=(8, 0),
+                    textcoords="offset points",
+                    ha="left",
+                    va="center",
+                    fontsize=8,
+                    color=point.color,
+                    clip_on=True,
+                )
         ax.set_ylabel("Amplitude")
 
     def _resampled_confidence(self, spec: VisualizationSpec, target_length: int):
@@ -217,6 +249,7 @@ class MatplotlibRenderer:
                     va="bottom",
                     fontsize=12,
                     color="white",
+                    clip_on=True,
                     bbox={"boxstyle": "round,pad=0.3", "edgecolor": "cyan", "facecolor": "black", "alpha": 0.7},
                 )
 
