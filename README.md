@@ -13,7 +13,14 @@ This library was extracted from the [elephant-rumble-inference](https://github.c
 ## Install
 
 ```bash
-pip install git+https://github.com/ramayer/audio-classifier-visualizer[all]
+
+!uv pip install "audio-classifier-visualizer[all] @ git+https://github.com/ramayer/audio-classifier-visualizer@v0.9.9-rc"
+
+# For CUDA/cupy acceleration:
+
+!uv pip install "audio-classifier-visualizer[all,gpu] @ git+https://github.com/ramayer/audio-classifier-visualizer@v0.9.9-rc"
+
+
 pip install audio-classifier-visualizer[all]        # STFT + wavelet + matplotlib
 pip install audio-classifier-visualizer[stft,plot]  # STFT only, no ssqueezepy
 pip install audio-classifier-visualizer[wavelet]     # just the CWT feature extractor, no plotting

@@ -25,9 +25,8 @@ wavelet = ["ssqueezepy>=0.6.5", "einx>=0.2"]
 plot = ["matplotlib>=3.8"]
 gpu = ["torch", "cupy-cuda13x"]
 all = ["audio-classifier-visualizer[stft,wavelet,plot]"]
-audioset = ["duckdb>=1.0", "pandas>=2.0", "einx>=0.2", "librosa>=0.10", "tqdm", "yt-dlp"]
+audioset = ["duckdb>=1.0", "pandas>=2.0", "einx>=0.2", "librosa>=0.10"]
 dev = ["audio-classifier-visualizer[all,audioset]", "pytest>=8.0", "pytest-cov", "ruff"]
-yamnet = ["tensorflow","tensorflow-hub"] # fails on python 3.14 for now (tensorflow breaks)
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/audio_classifier_visualizer"]
@@ -35,6 +34,31 @@ packages = ["src/audio_classifier_visualizer"]
 [tool.ruff]
 line-length = 120
 target-version = "py310"
+extend-exclude = ["notebooks", "*.md"]  # demo notebooks and README code samples aren't held to the library's lint/format bar
+
+[tool.ruff.lint]
+# A deliberately moderate ruleset -- not hatch's bundled default (which enables
+# ~everything, including things that fight this codebase's actual design):
+#   - PLC0415 (import not at top-level): src/ intentionally does lazy imports for
+#     every optional dependency (librosa, ssqueezepy, duckdb, torch, matplotlib) so
+#     the base install stays numpy+soundfile only -- that's a feature, not a lint issue.
+#   - SLF001 (private member access): tests intentionally exercise internals like
+#     AudioVisualization._load_slice/_slice_cache; that's what a unit test is for.
+#   - ARG001 (unused function argument): pytest fixtures are routinely accepted by a
+#     test without being referenced by name (they're used for their side effect of
+#     being set up), which isn't a code smell here.
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF"]
+ignore = [
+    "SIM108",  # ternary-over-if/else is a style preference, not a bug; not worth forcing everywhere
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "SLF001",  # tests intentionally exercise private/internal state
+    "ARG001",  # pytest fixtures are often "unused" by design
+    "E402",    # pytest.importorskip(...) before imports is the idiomatic way to skip
+               # a whole test module cleanly when an optional dependency is absent
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
