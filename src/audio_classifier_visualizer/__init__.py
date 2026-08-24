@@ -6,7 +6,7 @@ detail and may change between minor versions.
 
 from audio_classifier_visualizer.core.audio_signal import AudioSignal
 from audio_classifier_visualizer.core.classifier_output import ClassifierOutput
-from audio_classifier_visualizer.core.labels import LabelBox
+from audio_classifier_visualizer.core.labels import LabelBox, PointLabel
 from audio_classifier_visualizer.core.time_axis import TimeAxis
 from audio_classifier_visualizer.features.stft import STFTFeatureExtractor
 from audio_classifier_visualizer.features.wavelet import WaveletFeatureExtractor
@@ -31,6 +31,7 @@ __all__ = [
     "ClassifierOutput",
     "LabelBox",
     "MatplotlibRenderer",
+    "PointLabel",
     "STFTFeatureExtractor",
     "TimeAxis",
     "Track",

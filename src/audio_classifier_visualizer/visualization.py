@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 from audio_classifier_visualizer.core.audio_signal import AudioSignal
 from audio_classifier_visualizer.core.classifier_output import ClassifierOutput
-from audio_classifier_visualizer.core.labels import LabelBox
+from audio_classifier_visualizer.core.labels import LabelBox, PointLabel
 from audio_classifier_visualizer.features.stft import STFTFeatureExtractor
 from audio_classifier_visualizer.features.wavelet import WaveletFeatureExtractor
 from audio_classifier_visualizer.io.audio_loader import load_audio
@@ -40,6 +40,7 @@ class AudioVisualization:
         absolute_start: datetime | None = None,
         classifier_output: ClassifierOutput | None = None,
         labels: list[LabelBox] | None = None,
+        point_labels: list[PointLabel] | None = None,
         stft: STFTFeatureExtractor | None = None,
         wavelet: WaveletFeatureExtractor | None = None,
         renderer: Renderer | None = None,
@@ -63,6 +64,7 @@ class AudioVisualization:
         self._absolute_start = absolute_start
         self.classifier_output = classifier_output
         self.labels = labels or []
+        self.point_labels = point_labels or []
         self.stft = stft or STFTFeatureExtractor()
         self.wavelet = wavelet or WaveletFeatureExtractor()
         self.renderer = renderer or MatplotlibRenderer()
@@ -122,6 +124,7 @@ class AudioVisualization:
             classifier_slice = self.classifier_output.slice_time(start_time, end_time)
 
         labels_in_range = [box for box in self.labels if box.overlaps(start_time, end_time)]
+        point_labels_in_range = [p for p in self.point_labels if p.in_range(start_time, end_time)]
 
         return VisualizationSpec(
             audio=signal,
@@ -129,6 +132,7 @@ class AudioVisualization:
             title=title,
             display_offset=start_time,
             labels=labels_in_range,
+            point_labels=point_labels_in_range,
             classifier_output=classifier_slice,
             target_class=target_class,
             stft=self.stft,

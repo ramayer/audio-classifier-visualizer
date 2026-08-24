@@ -29,3 +29,23 @@ class LabelBox:
     @property
     def duration(self) -> float:
         return self.end_time - self.start_time
+
+
+@dataclass(slots=True)
+class PointLabel:
+    """A single marked point on the waveform: a (time, amplitude) pair, drawn as a
+    dot directly on the WAVEFORM track. Replaces the original's bare ``(t, h)``
+    tuple (``point_labels: list[tuple[float, float]]``) with named fields, same
+    reasoning as ``LabelBox`` replacing positional tuples.
+
+    This was present in the pre-1.0 code (as far back as v0.0.7) but was dropped
+    in the initial 1.0 rewrite -- not a deliberate cut, just missed.
+    """
+
+    time: float
+    amplitude: float
+    text: str = ""
+    color: str = "red"
+
+    def in_range(self, start_time: float, end_time: float) -> bool:
+        return start_time <= self.time <= end_time

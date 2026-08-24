@@ -15,6 +15,22 @@ from audio_classifier_visualizer.render.spec import Track
 from audio_classifier_visualizer.visualization import AudioVisualization
 
 
+def _agg_renderer(fig):
+    """A renderer guaranteed to support get_renderer(), regardless of whatever
+    backend happens to be globally active in this environment. Some setups
+    (certain uv-managed venvs, IPython/inline configs, etc.) end up with a generic
+    FigureCanvasBase -- which lacks get_renderer() -- even after
+    matplotlib.use("Agg", force=True), if something imports pyplot with a
+    different backend first. Wrapping the figure in an explicit FigureCanvasAgg
+    sidesteps that entirely; we only need pixel geometry here, not a real display.
+    """
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    canvas = FigureCanvasAgg(fig)
+    canvas.draw()
+    return canvas.get_renderer()
+
+
 @pytest.fixture
 def wav_path(tmp_path, tone, sr):
     path = tmp_path / "mono.wav"
@@ -153,17 +169,7 @@ def test_class_probability_stack_legend_does_not_overlap_next_track(tone, sr):
         tracks=(Track.CLASS_PROBABILITY_STACK, Track.SIMILARITY_LINES),
     )
     stack_ax, similarity_ax = fig.axes
-    # Use an explicit Agg canvas for this measurement rather than trusting whatever
-    # backend happens to be globally active -- some environments (certain uv-managed
-    # venvs, IPython/inline setups, etc.) end up with a generic FigureCanvasBase that
-    # lacks get_renderer() even after matplotlib.use("Agg"), if something imported
-    # pyplot with a different backend first. Agg is also just the right tool here:
-    # we only need pixel geometry, not an actual display.
-    from matplotlib.backends.backend_agg import FigureCanvasAgg
-
-    canvas = FigureCanvasAgg(fig)
-    canvas.draw()
-    renderer = canvas.get_renderer()
+    renderer = _agg_renderer(fig)
     legend = stack_ax.get_legend()
     assert legend is not None
     legend_bbox = legend.get_window_extent(renderer=renderer)
@@ -213,3 +219,137 @@ def test_xlim_matches_requested_range_not_tick_interval(wav_path):
     fig = viz.show(start_time=0.7, end_time=1.3, tracks=(Track.WAVEFORM,))
     for ax in fig.axes:
         assert ax.get_xlim() == pytest.approx((0.7, 1.3), abs=1e-6)
+
+
+def test_point_labels_render_on_waveform_and_are_time_filtered(tone, sr):
+    from audio_classifier_visualizer.core.labels import PointLabel
+
+    in_range_point = PointLabel(time=2.0, amplitude=0.5, text="in range")
+    out_of_range_point = PointLabel(time=8.0, amplitude=0.5, text="out of range")
+    viz = AudioVisualization(y=tone, sr=sr, point_labels=[in_range_point, out_of_range_point])
+
+    fig = viz.show(start_time=0.0, end_time=3.0, tracks=(Track.WAVEFORM,))
+    ax = fig.axes[0]
+    # each point label is drawn as an ax.scatter() PathCollection (ring + translucent
+    # fill); the out-of-range point must not add one.
+    assert len(ax.collections) == 1
+    offsets = ax.collections[0].get_offsets()
+    assert len(offsets) == 1
+    assert offsets[0][0] == pytest.approx(2.0)
+    assert offsets[0][1] == pytest.approx(0.5)
+
+
+def test_point_label_marker_has_translucent_fill_and_opaque_ring(tone, sr):
+    from audio_classifier_visualizer.core.labels import PointLabel
+
+    point = PointLabel(time=1.0, amplitude=0.3)
+    viz = AudioVisualization(y=tone, sr=sr, point_labels=[point])
+    fig = viz.show(end_time=2.0, tracks=(Track.WAVEFORM,))
+    ax = fig.axes[0]
+    collection = ax.collections[0]
+    face_rgba = collection.get_facecolor()[0]
+    edge_rgba = collection.get_edgecolor()[0]
+    assert 0.0 < face_rgba[3] < 1.0  # fill is translucent, not solid
+    assert edge_rgba[3] == pytest.approx(1.0)  # ring is opaque
+
+
+def test_point_label_custom_color_applies_to_marker_and_text(tone, sr):
+    from matplotlib.colors import to_rgba
+
+    from audio_classifier_visualizer.core.labels import PointLabel
+
+    point = PointLabel(time=1.0, amplitude=0.3, text="peak", color="blue")
+    viz = AudioVisualization(y=tone, sr=sr, point_labels=[point])
+    fig = viz.show(end_time=2.0, tracks=(Track.WAVEFORM,))
+    ax = fig.axes[0]
+    edge_rgba = ax.collections[0].get_edgecolor()[0]
+    assert tuple(edge_rgba[:3]) == pytest.approx(to_rgba("blue")[:3])
+    annotation = next(t for t in ax.texts if t.get_text() == "peak")
+    assert annotation.get_color() == "blue"
+
+
+def test_point_label_text_has_no_bbox_and_is_horizontally_offset(tone, sr):
+    from audio_classifier_visualizer.core.labels import PointLabel
+
+    point = PointLabel(time=1.0, amplitude=0.3, text="peak")
+    viz = AudioVisualization(y=tone, sr=sr, point_labels=[point])
+    fig = viz.show(end_time=2.0, tracks=(Track.WAVEFORM,))
+    ax = fig.axes[0]
+    annotation = next(t for t in ax.texts if t.get_text() == "peak")
+    assert annotation.get_bbox_patch() is None
+    assert annotation.get_verticalalignment() == "center"
+
+
+def test_waveform_line_is_black(tone, sr):
+    viz = AudioVisualization(y=tone, sr=sr)
+    fig = viz.show(end_time=1.0, tracks=(Track.WAVEFORM,))
+    ax = fig.axes[0]
+    waveform_line = ax.get_lines()[0]
+    assert waveform_line.get_color() in ("black", "k", "#000000")
+
+
+def test_point_label_text_is_annotated_smaller_than_label_box_text(tone, sr):
+    from audio_classifier_visualizer.core.labels import PointLabel
+
+    point = PointLabel(time=1.0, amplitude=0.3, text="peak")
+    viz = AudioVisualization(y=tone, sr=sr, point_labels=[point])
+    fig = viz.show(end_time=2.0, tracks=(Track.WAVEFORM,))
+    ax = fig.axes[0]
+    annotations = [child for child in ax.texts if child.get_text() == "peak"]
+    assert len(annotations) == 1
+    assert annotations[0].get_fontsize() < 12  # smaller than LabelBox's fontsize=12
+
+
+def test_point_label_without_text_adds_no_annotation(tone, sr):
+    from audio_classifier_visualizer.core.labels import PointLabel
+
+    point = PointLabel(time=1.0, amplitude=0.3)  # text="" (default)
+    viz = AudioVisualization(y=tone, sr=sr, point_labels=[point])
+    fig = viz.show(end_time=2.0, tracks=(Track.WAVEFORM,))
+    ax = fig.axes[0]
+    assert len(ax.texts) == 0
+
+
+def test_point_labels_build_spec_filters_by_range(tone, sr):
+    from audio_classifier_visualizer.core.labels import PointLabel
+
+    points = [PointLabel(time=t, amplitude=0.0) for t in (0.5, 2.0, 4.5)]
+    viz = AudioVisualization(y=tone, sr=sr, point_labels=points)
+    spec = viz.build_spec(start_time=0.0, end_time=3.0)
+    assert [p.time for p in spec.point_labels] == [0.5, 2.0]
+
+
+def test_label_text_beyond_display_range_does_not_inflate_tight_bbox(tone, sr):
+    """Regression test: a LabelBox that only partially overlaps the displayed range
+    (its own text is drawn at its end, which can be well past spec.end_time) must
+    not balloon the figure's tight bounding box -- that's what made the whole plot
+    render squeezed into a corner of the image. clip_on=True on the label text is
+    what keeps it from happening."""
+    from audio_classifier_visualizer.core.labels import LabelBox
+
+    label = LabelBox(start_time=1.0, end_time=2.0, low_freq=200, high_freq=400, text="D Note")
+    viz = AudioVisualization(y=tone, sr=sr, labels=[label])
+    fig = viz.show(start_time=0.7, end_time=1.3, tracks=(Track.STFT_SPECTROGRAM,))
+
+    tight_bbox = fig.get_tightbbox(_agg_renderer(fig))
+    nominal_width_px = fig.get_size_inches()[0] * fig.dpi
+    # A small margin is fine (the box itself, tick labels); ballooning to ~2x+ the
+    # nominal figure width is the bug this guards against.
+    assert tight_bbox.width < nominal_width_px * 1.2
+
+
+def test_point_label_text_beyond_display_range_does_not_inflate_tight_bbox(tone, sr):
+    """Same regression, for point-label text (ax.annotate) rather than LabelBox
+    text (ax.text) -- both call sites need clip_on=True independently."""
+    from audio_classifier_visualizer.core.labels import PointLabel
+
+    # Not filtered out by build_spec's in_range check (point.time IS in range);
+    # the annotation's *text*, offset a few points from the dot, is what could
+    # extend past the axes if clipping weren't set.
+    point = PointLabel(time=1.29, amplitude=0.0, text="right at the edge")
+    viz = AudioVisualization(y=tone, sr=sr, point_labels=[point])
+    fig = viz.show(start_time=0.7, end_time=1.3, tracks=(Track.WAVEFORM,))
+
+    tight_bbox = fig.get_tightbbox(_agg_renderer(fig))
+    nominal_width_px = fig.get_size_inches()[0] * fig.dpi
+    assert tight_bbox.width < nominal_width_px * 1.2

@@ -15,7 +15,7 @@ from typing import Protocol
 
 from audio_classifier_visualizer.core.audio_signal import AudioSignal
 from audio_classifier_visualizer.core.classifier_output import ClassifierOutput
-from audio_classifier_visualizer.core.labels import LabelBox
+from audio_classifier_visualizer.core.labels import LabelBox, PointLabel
 from audio_classifier_visualizer.features.stft import STFTFeatureExtractor
 from audio_classifier_visualizer.features.wavelet import WaveletFeatureExtractor
 
@@ -48,6 +48,7 @@ class VisualizationSpec:
     display_offset: float = 0.0
 
     labels: list[LabelBox] = field(default_factory=list)
+    point_labels: list[PointLabel] = field(default_factory=list)
     classifier_output: ClassifierOutput | None = None
     target_class: str | int | None = None
 

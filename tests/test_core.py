@@ -168,3 +168,13 @@ def test_resample_class_to_with_start_time_matches_narrow_zoom():
 
     crossing_idx = np.argmin(np.abs(stretched - 0.5))
     assert dst_t[crossing_idx] == pytest.approx(1.0, abs=0.01)
+
+
+def test_point_label_in_range():
+    from audio_classifier_visualizer.core.labels import PointLabel
+
+    p = PointLabel(time=5.0, amplitude=0.8, text="peak")
+    assert p.in_range(0.0, 10.0)
+    assert p.in_range(5.0, 5.0)  # boundary-inclusive, matches LabelBox.overlaps' inclusivity
+    assert not p.in_range(6.0, 10.0)
+    assert not p.in_range(0.0, 4.0)
