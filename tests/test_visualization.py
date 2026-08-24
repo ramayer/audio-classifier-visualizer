@@ -186,7 +186,9 @@ def test_similarity_line_crossing_stable_across_non_aligned_zoom(tone, sr):
 
     def crossing_time(start_time, end_time):
         viz = AudioVisualization(y=tone, sr=sr, classifier_output=co)
-        fig = viz.show(start_time=start_time, end_time=end_time, tracks=(Track.SIMILARITY_LINES,), target_class="target")
+        fig = viz.show(
+            start_time=start_time, end_time=end_time, tracks=(Track.SIMILARITY_LINES,), target_class="target"
+        )
         line = fig.axes[0].lines[0]  # similarity (green) line
         xdata, ydata = np.asarray(line.get_xdata()), np.asarray(line.get_ydata())
         # The rendered line only has the actual data points; the 0.5 crossing is

@@ -70,7 +70,9 @@ class WaveletFeatureExtractor:
 
         scale_size = min(self.chunk_size, n_samples, round(sr * 10))
         bounds = ssq_utils.cwt_scalebounds(self._wavelet, scale_size)
-        scales = ssq_utils.make_scales(scale_size, bounds[0], bounds[1], scaletype="log-piecewise", wavelet=self._wavelet)
+        scales = ssq_utils.make_scales(
+            scale_size, bounds[0], bounds[1], scaletype="log-piecewise", wavelet=self._wavelet
+        )
         freqs = scale_to_freq(scales, self._wavelet, scale_size, fs=sr)
         if self.freq_range_of_interest:
             lo, hi = self.freq_range_of_interest

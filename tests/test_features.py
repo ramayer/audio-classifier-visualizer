@@ -25,7 +25,9 @@ def test_stft_respects_freq_range_of_interest(tone, sr):
 def test_wavelet_chunking_matches_single_shot_on_short_signal(tone, sr):
     """Chunked processing should closely reproduce a naive single-pass CWT on a signal
     short enough to fit in one chunk (i.e. chunking shouldn't distort results)."""
-    extractor = WaveletFeatureExtractor(chunk_size=len(tone) + 8192, decimation_stride=1, freq_range_of_interest=(300, 600))
+    extractor = WaveletFeatureExtractor(
+        chunk_size=len(tone) + 8192, decimation_stride=1, freq_range_of_interest=(300, 600)
+    )
     result = extractor.compute(tone, sr, overlap=256)
     assert result.power.shape[0] == len(result.freqs)
     assert result.power.shape[1] == pytest.approx(len(tone), abs=2)

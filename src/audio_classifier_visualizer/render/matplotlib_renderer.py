@@ -48,7 +48,9 @@ class MatplotlibRenderer:
         tracks = [t for t in tracks if t != Track.CLASS_PROBABILITY_STACK or spec.classifier_output is not None]
         ratios = [height_per_track[t] for t in tracks]
 
-        fig, axes = plt.subplots(len(tracks), 1, sharex=True, figsize=(width, height), gridspec_kw={"height_ratios": ratios})
+        fig, axes = plt.subplots(
+            len(tracks), 1, sharex=True, figsize=(width, height), gridspec_kw={"height_ratios": ratios}
+        )
         axes = list(np.atleast_1d(axes))
 
         font_size = width * 10 / 19.2
@@ -65,7 +67,9 @@ class MatplotlibRenderer:
         last_ax.tick_params(axis="x", which="both", bottom=True, top=False, labelbottom=True)
         last_ax.set_xlabel("Time")
         interval = _tick_interval(spec.end_time - spec.start_time)
-        last_ax.set_xticks(np.arange(spec.start_time - (spec.start_time % interval), spec.end_time + interval, interval))
+        last_ax.set_xticks(
+            np.arange(spec.start_time - (spec.start_time % interval), spec.end_time + interval, interval)
+        )
         last_ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _pos: spec.audio.time_axis.format_relative(x)))
         # set_xticks on a sharex=True group re-expands the shared xlim to include any
         # tick location outside the current view (confirmed against matplotlib
@@ -136,7 +140,9 @@ class MatplotlibRenderer:
             power, freqs = result.power, result.freqs
             ax.set_ylabel("STFT Hz")
 
-        power = normalize_power(power, per_channel_normalize=spec.per_channel_normalize, clip_outliers=spec.clip_outliers)
+        power = normalize_power(
+            power, per_channel_normalize=spec.per_channel_normalize, clip_outliers=spec.clip_outliers
+        )
         db = power_to_db(power)
         normed = (db - db.min()) / max(db.max() - db.min(), 1e-9)
 
@@ -147,11 +153,15 @@ class MatplotlibRenderer:
             rgb = np.stack([normed, normed, normed], axis=-1)
 
         origin = "lower" if not wavelet else "upper"
-        extent = (spec.start_time, spec.end_time, freqs[0], freqs[-1]) if not wavelet else (
-            spec.start_time,
-            spec.end_time,
-            len(freqs),
-            0,
+        extent = (
+            (spec.start_time, spec.end_time, freqs[0], freqs[-1])
+            if not wavelet
+            else (
+                spec.start_time,
+                spec.end_time,
+                len(freqs),
+                0,
+            )
         )
         ax.imshow(rgb, aspect="auto", origin=origin, extent=extent)
         if wavelet:
