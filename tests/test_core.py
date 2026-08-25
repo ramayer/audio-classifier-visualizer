@@ -178,3 +178,40 @@ def test_point_label_in_range():
     assert p.in_range(5.0, 5.0)  # boundary-inclusive, matches LabelBox.overlaps' inclusivity
     assert not p.in_range(6.0, 10.0)
     assert not p.in_range(0.0, 4.0)
+
+
+def test_slice_time_with_margin_includes_neighboring_windows():
+    """Regression test: a display window narrower than one classifier window (or
+    just unluckily aligned) must still get at least 2 windows of data so a line
+    plot / stackplot has something visible to draw -- a single point is invisible."""
+    feature_rate = 2.0  # 0.5s windows, matching the reported notebook scenario
+    co = ClassifierOutput(
+        probabilities=np.arange(20).reshape(10, 2), feature_rate=feature_rate, class_labels=["a", "b"]
+    )
+
+    plain = co.slice_time(0.0, 0.5)
+    assert plain.n_windows == 1  # confirms the bug's precondition
+
+    with_margin = co.slice_time_with_margin(0.0, 0.5)
+    assert with_margin.n_windows >= 2
+
+
+def test_slice_time_with_margin_clamps_at_true_boundaries():
+    """Margin windows can't be conjured at the true start/end of the data -- must
+    clamp gracefully rather than requesting a negative or out-of-range index."""
+    co = ClassifierOutput(probabilities=np.arange(20).reshape(10, 2), feature_rate=2.0, class_labels=["a", "b"])
+    at_start = co.slice_time_with_margin(0.0, 0.5)
+    assert at_start.time_offset == pytest.approx(0.0)  # can't go before window 0
+
+    at_end = co.slice_time_with_margin(4.5, 5.0)
+    assert at_end.n_windows <= co.n_windows  # doesn't crash / overrun
+    assert at_end.window_centers()[-1] == pytest.approx(co.window_centers()[-1])  # clamped, not overrun
+
+
+def test_slice_time_with_margin_time_offset_still_correct():
+    """The margin-widened slice's own window_centers() must still report true
+    absolute positions -- same correctness requirement as plain slice_time."""
+    co = ClassifierOutput(probabilities=np.zeros((10, 1)), feature_rate=2.0, class_labels=["x"])
+    sliced = co.slice_time_with_margin(1.0, 1.5, margin_windows=1)
+    # window index 2 is real window for t=[1.0,1.5); margin includes index 1 and 3.
+    np.testing.assert_allclose(sliced.window_centers(), co.window_centers()[1:4])

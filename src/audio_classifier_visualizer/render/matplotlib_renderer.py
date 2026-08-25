@@ -24,7 +24,55 @@ def _tick_interval(duration: float) -> float:
     return next((v for limit, v in _TICK_INTERVALS if duration <= limit), 3600)
 
 
+def _bucket_stats(y: np.ndarray, n_buckets: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Split ``y`` into up to ``n_buckets`` equal-size chunks and return
+    (min, max, mean, std) per chunk, fully vectorized (no per-bucket Python loop)
+    via pad-then-reshape.
+
+    The chunk size is chosen first (ceil(len(y) / n_buckets)), and the actual
+    bucket count derived from *that* -- not the other way around. That guarantees
+    at most one chunk's worth of padding total, confined to (at most) the tail of
+    the very last bucket. The naive approach of padding up to the next multiple of
+    n_buckets can instead need up to n_buckets-1 samples of padding, which -- for a
+    short clip where each bucket only holds a handful of real samples -- can mean
+    dozens or hundreds of *entirely fake* trailing buckets (all edge-repeated
+    padding, no real data at all), rendering as the plot going dead/flat well
+    before the requested end_time. Confirmed as the root cause of exactly that
+    symptom: a 0.5s/8000Hz clip bucketed toward 1200 target pixels padded 800 of
+    4000 samples (200 of 1200 buckets, 16.7% of the plot width) under the naive
+    approach; this version pads 0.
+
+    Padding (on the rare occasion any is still needed) repeats the last real
+    sample rather than filling with e.g. the global mean -- that only affects
+    the tail of the last bucket, and repeating an already-present value doesn't
+    distort its min/max/mean/std the way injecting an unrelated fill value could.
+
+    The returned arrays may have slightly fewer than ``n_buckets`` entries (never
+    more) -- callers should size their x-axis off the actual returned length, not
+    the requested ``n_buckets``.
+    """
+    n_buckets = max(1, n_buckets)
+    chunk_size = max(1, -(-len(y) // n_buckets))  # ceil(len(y) / n_buckets) via negated floor division
+    n_buckets_actual = -(-len(y) // chunk_size)  # ceil(len(y) / chunk_size); guaranteed <= n_buckets
+    pad_len = n_buckets_actual * chunk_size - len(y)
+    padded = np.pad(y, (0, pad_len), mode="edge") if pad_len else y
+    reshaped = padded.reshape(n_buckets_actual, chunk_size)
+    return reshaped.min(axis=1), reshaped.max(axis=1), reshaped.mean(axis=1), reshaped.std(axis=1)
+
+
 class MatplotlibRenderer:
+    def __init__(self, waveform_envelope_threshold: float = 2.0) -> None:
+        """
+        Args:
+            waveform_envelope_threshold: when samples-per-pixel in the WAVEFORM
+                track exceeds this, switch from a direct line plot to a bucketed
+                min/max/mean/std envelope (see _draw_waveform). Lower values switch
+                to the envelope sooner (more conservative about plot cost/clarity
+                at the expense of raw detail); higher values keep the direct line
+                plot longer.
+        """
+        self.waveform_envelope_threshold = waveform_envelope_threshold
+
     def render(
         self,
         spec: VisualizationSpec,
@@ -115,8 +163,39 @@ class MatplotlibRenderer:
         from matplotlib.colors import to_rgba
 
         y = spec.audio.as_mono() if spec.audio.n_channels > 1 else spec.audio.channel(0)
-        times = np.linspace(spec.start_time, spec.end_time, len(y))
-        ax.plot(times, y, linewidth=0.5, color="black")
+        n_pixels = max(1, round(ax.figure.get_size_inches()[0] * ax.figure.dpi))
+        samples_per_pixel = len(y) / n_pixels
+
+        if samples_per_pixel <= self.waveform_envelope_threshold:
+            # Few enough samples per pixel that a direct line plot is both cheap and
+            # actually shows the waveform's shape (a guitar string's not-quite-sine
+            # wave, etc.) -- exactly what an envelope would obscure.
+            times = np.linspace(spec.start_time, spec.end_time, len(y))
+            ax.plot(times, y, linewidth=0.5, color="black")
+        else:
+            # Too many samples per pixel for a direct line plot to be meaningful (it
+            # becomes a solid black blob) or fast. Bucket to ~one point per pixel and
+            # draw three nested layers, all from the same per-bucket statistics:
+            #   - min/max envelope (light grey): the full excursion in each bucket.
+            #   - mean +/- std band (medium grey): despite the name "RMS envelope",
+            #     this is std of the *detrended* signal, not sqrt(mean(x**2)) --
+            #     plain RMS is dominated by any DC offset (e.g. a pressure sensor
+            #     sitting at ~10 with a small AC component would render as a flat
+            #     line at ~10 either way), telling you nothing about the AC
+            #     variation. std around the local mean stays meaningful regardless
+            #     of DC offset.
+            #   - mean (black line): ~0 for zero-centered audio (harmless, sits
+            #     inside the std band) but becomes the visible DC-trend line for a
+            #     signal like a pressure sensor -- exactly the case this needs to
+            #     support alongside ordinary zero-centered audio.
+            bucket_min, bucket_max, bucket_mean, bucket_std = _bucket_stats(y, n_pixels)
+            bucket_times = np.linspace(spec.start_time, spec.end_time, len(bucket_min))
+            ax.fill_between(bucket_times, bucket_min, bucket_max, color="0.75", linewidth=0, zorder=1)
+            ax.fill_between(
+                bucket_times, bucket_mean - bucket_std, bucket_mean + bucket_std, color="0.45", linewidth=0, zorder=2
+            )
+            ax.plot(bucket_times, bucket_mean, color="black", linewidth=0.8, zorder=2.5)
+
         for point in spec.point_labels:
             # Thin opaque ring + translucent fill (not a solid dot) so the waveform
             # underneath the marker stays visible -- a solid marker at the peak
@@ -163,16 +242,35 @@ class MatplotlibRenderer:
         return similarity, dissimilarity
 
     def _draw_spectrogram(self, ax, spec: VisualizationSpec, *, wavelet: bool) -> None:
-        y = spec.audio.as_mono() if spec.audio.n_channels > 1 else spec.audio.channel(0)
-        sr = spec.audio.sr
+        # Compute over context_audio (real neighboring samples, or reflect/edge
+        # padding at a true file boundary -- see AudioVisualization._load_context_audio)
+        # when available, so analysis windows near the display edge aren't relying on
+        # the feature extractors' own internal zero-padding. Falls back to computing
+        # directly on spec.audio (old behavior, edge artifacts and all) for a spec
+        # built by hand without going through AudioVisualization.
+        use_context = spec.context_audio is not None
+        source = spec.context_audio if use_context else spec.audio
+        y = source.as_mono() if source.n_channels > 1 else source.channel(0)
+        sr = source.sr
         if wavelet:
             result = spec.wavelet.compute(y, sr)
             power, freqs = result.power, result.freqs
             ax.set_ylabel("Wavelet Hz")
+            columns_per_second = sr / spec.wavelet.decimation_stride
         else:
             result = spec.stft.compute(y, sr)
             power, freqs = result.power, result.freqs
             ax.set_ylabel("STFT Hz")
+            columns_per_second = sr / spec.stft.hop_length
+
+        if use_context:
+            # Crop the context-widened spectrogram back down to just the requested
+            # display range -- the extra columns on each side existed only to give
+            # the edge analysis windows real data to work with, not to be shown.
+            start_col = round(spec.context_seconds * columns_per_second)
+            end_col = min(power.shape[1], start_col + round(spec.audio.duration * columns_per_second))
+            start_col = min(start_col, end_col)
+            power = power[:, start_col:end_col]
 
         power = normalize_power(
             power, per_channel_normalize=spec.per_channel_normalize, clip_outliers=spec.clip_outliers

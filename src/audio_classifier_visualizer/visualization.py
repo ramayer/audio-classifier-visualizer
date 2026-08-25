@@ -15,6 +15,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 from audio_classifier_visualizer.core.audio_signal import AudioSignal
 from audio_classifier_visualizer.core.classifier_output import ClassifierOutput
 from audio_classifier_visualizer.core.labels import LabelBox, PointLabel
@@ -25,7 +27,7 @@ from audio_classifier_visualizer.render.matplotlib_renderer import MatplotlibRen
 from audio_classifier_visualizer.render.spec import DEFAULT_TRACKS, Renderer, Track, VisualizationSpec
 
 if TYPE_CHECKING:
-    import numpy as np
+    pass
 
 _CACHE_SIZE = 8
 
@@ -103,6 +105,64 @@ class AudioVisualization:
         self._slice_cache[key] = signal
         return signal
 
+    def _effective_sr(self) -> float:
+        """The sample rate audio actually gets processed at -- after any target_sr
+        resampling -- needed to convert a context padding requirement (in samples)
+        into seconds before we've necessarily loaded anything yet."""
+        if self._target_sr is not None:
+            return self._target_sr
+        if self._preloaded_signal is not None:
+            return self._preloaded_signal.sr
+        import soundfile as sf
+
+        return float(sf.info(self._audio_file).samplerate)
+
+    def _context_seconds(self) -> float:
+        """How much real (or, failing that, reflect/edge-padded) audio to fetch on
+        each side of the requested display range before computing STFT/CWT, so
+        that analysis windows near the display boundary have genuine neighboring
+        samples instead of the feature extractors' own internal zero-padding.
+
+        Sized to the larger of what STFT (half its FFT window) and the wavelet
+        extractor (its own chunk-overlap) need -- both are already-meaningful
+        quantities the user may have tuned, not new knobs to configure separately.
+        """
+        sr = self._effective_sr()
+        stft_context = (self.stft.n_fft / 2) / sr
+        wavelet_context = self.wavelet.overlap / sr
+        return max(stft_context, wavelet_context)
+
+    def _load_context_audio(self, start_time: float, end_time: float, context_seconds: float) -> AudioSignal:
+        """Load [start_time - context_seconds, end_time + context_seconds), using real
+        neighboring samples where the source has them. Where it doesn't (the
+        request runs past the true start/end of the file or array), pad with
+        reflected audio instead of the zero-silence a naive slice would otherwise
+        imply -- a hard edge into silence is itself a spectrogram artifact, just a
+        different one than the zero-padding this whole mechanism exists to avoid.
+        Falls back from reflect to edge-repeat if there isn't even enough real data
+        to reflect (only possible for extremely short clips).
+        """
+        want_left = start_time - context_seconds
+        want_right = end_time + context_seconds
+        avail_left = max(0.0, want_left)
+        avail_right = min(self.duration, want_right)
+
+        signal = self._load_slice(avail_left, avail_right)
+
+        pad_left = round(max(0.0, avail_left - want_left) * signal.sr)
+        pad_right = round(max(0.0, want_right - avail_right) * signal.sr)
+        if pad_left == 0 and pad_right == 0:
+            return signal
+
+        samples = signal.samples
+        try:
+            padded = np.pad(samples, ((0, 0), (pad_left, pad_right)), mode="reflect")
+        except ValueError:
+            # reflect requires each pad width < the axis length; only possible for
+            # a clip shorter than the context window itself.
+            padded = np.pad(samples, ((0, 0), (pad_left, pad_right)), mode="edge")
+        return AudioSignal(samples=padded, sr=signal.sr, source_path=signal.source_path)
+
     def build_spec(
         self,
         *,
@@ -121,16 +181,21 @@ class AudioVisualization:
 
         classifier_slice = None
         if self.classifier_output is not None:
-            classifier_slice = self.classifier_output.slice_time(start_time, end_time)
+            classifier_slice = self.classifier_output.slice_time_with_margin(start_time, end_time)
 
         labels_in_range = [box for box in self.labels if box.overlaps(start_time, end_time)]
         point_labels_in_range = [p for p in self.point_labels if p.in_range(start_time, end_time)]
+
+        context_seconds = self._context_seconds()
+        context_audio = self._load_context_audio(start_time, end_time, context_seconds)
 
         return VisualizationSpec(
             audio=signal,
             tracks=tuple(tracks),
             title=title,
             display_offset=start_time,
+            context_audio=context_audio,
+            context_seconds=context_seconds,
             labels=labels_in_range,
             point_labels=point_labels_in_range,
             classifier_output=classifier_slice,
