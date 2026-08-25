@@ -43,12 +43,17 @@ class WaveletFeatureExtractor:
         *,
         use_gpu: bool = False,
         synchrosqueeze: bool = False,
+        overlap: int = 512,
     ) -> None:
         self.decimation_stride = decimation_stride
         self.chunk_size = ((chunk_size + decimation_stride) // decimation_stride) * decimation_stride
         self.freq_range_of_interest = freq_range_of_interest
         self.use_gpu = use_gpu
         self.synchrosqueeze = synchrosqueeze
+        # Stored (not just a compute() default) so callers -- notably
+        # AudioVisualization's edge-context padding -- can size how much real
+        # neighboring audio they need to fetch without duplicating this number.
+        self.overlap = overlap
         self._wavelet = None  # lazily constructed; ssqueezepy import deferred to first use
 
     def _ensure_ssqueezepy(self):
@@ -95,8 +100,13 @@ class WaveletFeatureExtractor:
         decimated_pwr = einx.mean("a (b c) -> a b", spec_pwr, c=stride)
         return decimated_amp, decimated_pwr
 
-    def compute(self, y: np.ndarray, sr: float, overlap: int = 512) -> WaveletResult:
-        """Run the (possibly synchrosqueezed) CWT over ``y`` in overlapping chunks."""
+    def compute(self, y: np.ndarray, sr: float, overlap: int | None = None) -> WaveletResult:
+        """Run the (possibly synchrosqueezed) CWT over ``y`` in overlapping chunks.
+
+        ``overlap`` defaults to ``self.overlap`` if not given -- the per-call
+        argument remains for backward compatibility / one-off overrides.
+        """
+        overlap = self.overlap if overlap is None else overlap
         sqz = self._ensure_ssqueezepy()
         prev_gpu_env = os.environ.get("SSQ_GPU")
         if self.use_gpu:

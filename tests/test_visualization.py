@@ -222,6 +222,8 @@ def test_xlim_matches_requested_range_not_tick_interval(wav_path):
 
 
 def test_point_labels_render_on_waveform_and_are_time_filtered(tone, sr):
+    from matplotlib.collections import PathCollection
+
     from audio_classifier_visualizer.core.labels import PointLabel
 
     in_range_point = PointLabel(time=2.0, amplitude=0.5, text="in range")
@@ -231,22 +233,27 @@ def test_point_labels_render_on_waveform_and_are_time_filtered(tone, sr):
     fig = viz.show(start_time=0.0, end_time=3.0, tracks=(Track.WAVEFORM,))
     ax = fig.axes[0]
     # each point label is drawn as an ax.scatter() PathCollection (ring + translucent
-    # fill); the out-of-range point must not add one.
-    assert len(ax.collections) == 1
-    offsets = ax.collections[0].get_offsets()
+    # fill); the waveform envelope's fill_between layers are PolyCollections, so
+    # filter by type rather than assuming point markers are the only collections.
+    # The out-of-range point must not add one.
+    point_markers = [c for c in ax.collections if isinstance(c, PathCollection)]
+    assert len(point_markers) == 1
+    offsets = point_markers[0].get_offsets()
     assert len(offsets) == 1
     assert offsets[0][0] == pytest.approx(2.0)
     assert offsets[0][1] == pytest.approx(0.5)
 
 
 def test_point_label_marker_has_translucent_fill_and_opaque_ring(tone, sr):
+    from matplotlib.collections import PathCollection
+
     from audio_classifier_visualizer.core.labels import PointLabel
 
     point = PointLabel(time=1.0, amplitude=0.3)
     viz = AudioVisualization(y=tone, sr=sr, point_labels=[point])
     fig = viz.show(end_time=2.0, tracks=(Track.WAVEFORM,))
     ax = fig.axes[0]
-    collection = ax.collections[0]
+    collection = next(c for c in ax.collections if isinstance(c, PathCollection))
     face_rgba = collection.get_facecolor()[0]
     edge_rgba = collection.get_edgecolor()[0]
     assert 0.0 < face_rgba[3] < 1.0  # fill is translucent, not solid
@@ -254,6 +261,7 @@ def test_point_label_marker_has_translucent_fill_and_opaque_ring(tone, sr):
 
 
 def test_point_label_custom_color_applies_to_marker_and_text(tone, sr):
+    from matplotlib.collections import PathCollection
     from matplotlib.colors import to_rgba
 
     from audio_classifier_visualizer.core.labels import PointLabel
@@ -262,7 +270,8 @@ def test_point_label_custom_color_applies_to_marker_and_text(tone, sr):
     viz = AudioVisualization(y=tone, sr=sr, point_labels=[point])
     fig = viz.show(end_time=2.0, tracks=(Track.WAVEFORM,))
     ax = fig.axes[0]
-    edge_rgba = ax.collections[0].get_edgecolor()[0]
+    point_marker = next(c for c in ax.collections if isinstance(c, PathCollection))
+    edge_rgba = point_marker.get_edgecolor()[0]
     assert tuple(edge_rgba[:3]) == pytest.approx(to_rgba("blue")[:3])
     annotation = next(t for t in ax.texts if t.get_text() == "peak")
     assert annotation.get_color() == "blue"
@@ -353,3 +362,246 @@ def test_point_label_text_beyond_display_range_does_not_inflate_tight_bbox(tone,
     tight_bbox = fig.get_tightbbox(_agg_renderer(fig))
     nominal_width_px = fig.get_size_inches()[0] * fig.dpi
     assert tight_bbox.width < nominal_width_px * 1.2
+
+
+def test_bucket_stats_matches_naive_per_bucket_computation():
+    from audio_classifier_visualizer.render.matplotlib_renderer import _bucket_stats
+
+    rng = np.random.default_rng(0)
+    y = rng.normal(loc=10.0, scale=0.5, size=997)  # deliberately not evenly divisible
+    n_buckets = 10
+    bucket_min, bucket_max, bucket_mean, _bucket_std = _bucket_stats(y, n_buckets)
+    assert len(bucket_min) == n_buckets
+
+    # Cross-check against a naive per-bucket loop over the *unpadded* data for all
+    # buckets except the last (which legitimately differs slightly due to edge padding).
+    # Bucket size is ceil(len(y) / n_buckets) -- the chunk size is chosen first, then
+    # padding fills only the tail of the last bucket (see _bucket_stats docstring).
+    chunk_size = -(-len(y) // n_buckets)  # ceil division
+    for i in range(n_buckets - 1):
+        chunk = y[i * chunk_size : (i + 1) * chunk_size]
+        assert bucket_mean[i] == pytest.approx(chunk.mean(), rel=1e-3)
+        assert bucket_min[i] == pytest.approx(chunk.min(), rel=1e-3)
+        assert bucket_max[i] == pytest.approx(chunk.max(), rel=1e-3)
+
+
+def test_bucket_stats_std_ignores_dc_offset():
+    """The whole point of using std (not sqrt(mean(x**2))) for the inner band: a
+    signal with a large DC offset and small AC component must show a small std,
+    not one dominated by the offset -- e.g. a pressure sensor sitting at ~10 with
+    a +/-1 wobble should read as "small variation around 10", not swamped by the 10."""
+    from audio_classifier_visualizer.render.matplotlib_renderer import _bucket_stats
+
+    t = np.linspace(0, 4 * np.pi, 2000)
+    pressure_like = 10.0 + 1.0 * np.sin(t)  # DC offset 10, AC amplitude 1
+    _bmin, _bmax, bucket_mean, bucket_std = _bucket_stats(pressure_like, n_buckets=4)
+    assert np.all(bucket_mean > 8.0)  # DC offset preserved in the mean line
+    assert np.all(bucket_std < 1.0)  # AC-only variation, not inflated by the offset
+
+
+def test_waveform_uses_direct_line_when_few_samples_per_pixel(sr):
+    """A short, high-sample-rate-relative-to-duration clip (the 'guitar string'
+    case) should stay a direct line plot, not switch into envelope mode."""
+    from matplotlib.collections import PolyCollection
+
+    t = np.arange(0, int(0.05 * sr)) / sr  # 50ms -- few samples relative to typical pixel width
+    y = np.sin(2 * np.pi * 440 * t).astype(np.float32)
+    viz = AudioVisualization(y=y, sr=sr)
+    fig = viz.show(end_time=0.05, tracks=(Track.WAVEFORM,), width=6, height=2)
+    ax = fig.axes[0]
+    assert not any(isinstance(c, PolyCollection) for c in ax.collections)
+    assert len(ax.get_lines()) == 1
+    assert len(ax.get_lines()[0].get_xdata()) == len(y)  # full-resolution line, not bucketed
+
+
+def test_waveform_uses_envelope_when_many_samples_per_pixel(sr):
+    """A long clip relative to the figure's pixel width should switch to the
+    bucketed min/max/std envelope rather than a single dense line."""
+    from matplotlib.collections import PolyCollection
+
+    t = np.arange(0, 60 * sr) / sr  # 60s at 8kHz -> far more samples than pixels
+    y = np.sin(2 * np.pi * 440 * t).astype(np.float32)
+    viz = AudioVisualization(y=y, sr=sr)
+    fig = viz.show(end_time=60.0, tracks=(Track.WAVEFORM,), width=6, height=2)
+    ax = fig.axes[0]
+    poly_collections = [c for c in ax.collections if isinstance(c, PolyCollection)]
+    assert len(poly_collections) == 2  # min/max envelope + mean+/-std band
+    mean_line = ax.get_lines()[0]
+    n_pixels_approx = round(6 * fig.dpi)
+    assert len(mean_line.get_xdata()) == pytest.approx(n_pixels_approx, rel=0.05)
+
+
+def test_waveform_envelope_threshold_is_configurable(sr):
+    """A custom MatplotlibRenderer(waveform_envelope_threshold=...) should shift
+    where the direct-line/envelope switch happens."""
+    from matplotlib.collections import PolyCollection
+
+    from audio_classifier_visualizer.render.matplotlib_renderer import MatplotlibRenderer
+
+    t = np.arange(0, int(0.05 * sr)) / sr
+    y = np.sin(2 * np.pi * 440 * t).astype(np.float32)
+    # A very low threshold should force envelope mode even for this short clip that
+    # the default threshold would render as a direct line (see the test above).
+    renderer = MatplotlibRenderer(waveform_envelope_threshold=0.01)
+    viz = AudioVisualization(y=y, sr=sr, renderer=renderer)
+    fig = viz.show(end_time=0.05, tracks=(Track.WAVEFORM,), width=6, height=2)
+    ax = fig.axes[0]
+    assert any(isinstance(c, PolyCollection) for c in ax.collections)
+
+
+def test_context_seconds_uses_larger_of_stft_and_wavelet_needs(sr):
+    from audio_classifier_visualizer.features.stft import STFTFeatureExtractor
+    from audio_classifier_visualizer.features.wavelet import WaveletFeatureExtractor
+
+    viz = AudioVisualization(
+        y=np.zeros(int(sr * 10), dtype=np.float32),
+        sr=sr,
+        stft=STFTFeatureExtractor(n_fft=2048),
+        wavelet=WaveletFeatureExtractor(overlap=100),
+    )
+    # stft needs (2048/2)/sr = 0.128s; wavelet needs 100/sr = 0.0125s -- stft wins.
+    assert viz._context_seconds() == pytest.approx((2048 / 2) / sr)
+
+
+def test_load_context_audio_uses_real_neighboring_samples(sr):
+    """The whole point: context audio in the middle of a longer clip should be
+    genuine neighboring samples, not zeros or padding."""
+    t = np.arange(0, 10 * sr) / sr
+    y = np.sin(2 * np.pi * 440 * t).astype(np.float32)  # continuous tone throughout
+    viz = AudioVisualization(y=y, sr=sr)
+    ctx = viz._load_context_audio(3.0, 7.0, context_seconds=0.5)
+    # Context buffer should span [2.5, 7.5) -- 5s of real signal, no padding needed.
+    assert ctx.duration == pytest.approx(5.0, abs=1e-2)
+    # Its content should match the real signal at that position, not zeros.
+    assert np.abs(ctx.channel(0)).mean() > 0.3  # nowhere near the ~0 a zero-padded region would show
+
+
+def test_load_context_audio_reflects_at_true_start_of_file(sr):
+    """Near t=0, there's no real 'before' data -- must reflect-pad, not zero-pad."""
+    t = np.arange(0, 5 * sr) / sr
+    y = (0.5 + 0.3 * np.sin(2 * np.pi * 3 * t)).astype(np.float32)  # nonzero throughout, incl. near t=0
+    viz = AudioVisualization(y=y, sr=sr)
+    ctx = viz._load_context_audio(0.0, 1.0, context_seconds=0.3)
+    # Requested [-0.3, 1.3) clamps to [0, 1.3) real + 0.3s reflected on the left.
+    assert ctx.duration == pytest.approx(1.6, abs=1e-2)
+    left_pad_region = ctx.channel(0)[: round(0.3 * sr)]
+    # A reflect-padded region mirrors real (nonzero) signal values, not silence.
+    assert np.abs(left_pad_region).mean() > 0.2
+
+
+def test_load_context_audio_reflects_at_true_end_of_file(sr):
+    t = np.arange(0, 5 * sr) / sr
+    y = (0.5 + 0.3 * np.sin(2 * np.pi * 3 * t)).astype(np.float32)
+    viz = AudioVisualization(y=y, sr=sr)
+    ctx = viz._load_context_audio(4.0, 5.0, context_seconds=0.3)
+    assert ctx.duration == pytest.approx(1.6, abs=1e-2)
+    right_pad_region = ctx.channel(0)[-round(0.3 * sr) :]
+    assert np.abs(right_pad_region).mean() > 0.2
+
+
+def test_spectrogram_edge_uses_real_context_not_zero_padding(sr):
+    """Regression test for the reported bug: a display window in the *middle* of a
+    longer clip should have spectrogram energy near its edges that reflects the
+    real continuing signal, not an artifact from the edge of the displayed slice
+    being treated as the edge of the whole signal."""
+    t = np.arange(0, 20 * sr) / sr
+    y = np.sin(2 * np.pi * 440 * t).astype(np.float32)  # continuous tone, no gaps
+    viz = AudioVisualization(y=y, sr=sr)
+    viz.stft.n_fft = 1024
+    fig = viz.show(start_time=5.0, end_time=15.0, tracks=(Track.STFT_SPECTROGRAM,))
+    ax = fig.axes[0]
+    img = np.asarray(ax.get_images()[0].get_array())
+    # A continuous tone should look roughly uniform across time -- the first and
+    # last few columns should not be dramatically darker/different than the middle
+    # the way a hard zero-padded edge would produce.
+    middle_col_brightness = img[:, img.shape[1] // 2].mean()
+    first_col_brightness = img[:, 2].mean()
+    last_col_brightness = img[:, -3].mean()
+    assert abs(first_col_brightness - middle_col_brightness) < 0.3
+    assert abs(last_col_brightness - middle_col_brightness) < 0.3
+
+
+def test_hand_built_spec_without_context_audio_still_renders(tone, sr):
+    """A VisualizationSpec built directly (bypassing AudioVisualization) has no
+    context_audio -- rendering must still work, just without the edge-context fix."""
+    from audio_classifier_visualizer.core.audio_signal import AudioSignal
+    from audio_classifier_visualizer.render.matplotlib_renderer import MatplotlibRenderer
+    from audio_classifier_visualizer.render.spec import VisualizationSpec
+
+    signal = AudioSignal(samples=tone, sr=sr)
+    spec = VisualizationSpec(audio=signal, tracks=(Track.STFT_SPECTROGRAM,))
+    assert spec.context_audio is None
+    fig = MatplotlibRenderer().render(spec)
+    assert fig is not None
+
+
+def test_bucket_stats_short_clip_has_no_trailing_dead_zone():
+    """Regression test for the reported bug: a short clip bucketed toward a much
+    larger target pixel count must not pad up to a huge fraction of fake trailing
+    buckets. This exact scenario (0.5s at 8000Hz, width=12in/dpi=100 -> 1200
+    target buckets) padded 200 of 1200 buckets (16.7% of the plot!) under the old
+    algorithm; the fix guarantees at most one bucket's worth of padding, total."""
+    from audio_classifier_visualizer.render.matplotlib_renderer import _bucket_stats
+
+    len_y = 4000  # 0.5s * 8000Hz, matching the reported notebook scenario
+    y = np.sin(2 * np.pi * 5 * np.linspace(0, 0.5, len_y))
+    n_pixels = 1200  # width=12in * dpi=100
+
+    bucket_min, bucket_max, _mean, _std = _bucket_stats(y, n_pixels)
+    n_buckets_actual = len(bucket_min)
+    chunk_size = -(-len_y // n_pixels)
+    total_covered = n_buckets_actual * chunk_size
+    pad_len = total_covered - len_y
+    assert pad_len < chunk_size  # at most a fraction of ONE bucket, never whole fake buckets
+
+    # No bucket should be a flat, fully-padded (min == max, unrelated to the
+    # signal's real range) artifact anywhere but possibly the very last one.
+    degenerate_buckets = [i for i in range(n_buckets_actual - 1) if (bucket_max[i] - bucket_min[i]) < 1e-9]
+    assert not degenerate_buckets
+
+
+def test_waveform_short_clip_spans_full_requested_range(sr):
+    """End-to-end regression: the exact reported symptom -- the rendered waveform
+    x-data must cover the full requested [start_time, end_time), not stop short."""
+    y = np.sin(2 * np.pi * 440 * np.arange(0, int(0.5 * sr)) / sr).astype(np.float32)
+    viz = AudioVisualization(y=y, sr=sr)
+    fig = viz.show(start_time=0.0, end_time=0.5, tracks=(Track.WAVEFORM,), width=12, height=6)
+    ax = fig.axes[0]
+    # Whichever drawing mode engaged (direct line or envelope), the last drawn
+    # x-value should reach (not stop well short of) the requested end_time.
+    last_x = max(
+        (line.get_xdata()[-1] for line in ax.get_lines() if len(line.get_xdata())),
+        default=None,
+    )
+    assert last_x == pytest.approx(0.5, abs=0.5 / 1200 * 2)  # within ~2 buckets of the true end
+
+
+def test_similarity_and_class_stack_render_when_display_window_narrower_than_one_classifier_window(tone, sr):
+    """Regression test for the reported bug: zooming to a range narrower than one
+    classifier window (or just unluckily aligned to contain only one) must still
+    show visible SIMILARITY_LINES / CLASS_PROBABILITY_STACK content, not nothing."""
+    feature_rate = 2.0  # 0.5s windows
+    n_windows = 20
+    probs = np.zeros((n_windows, 2))
+    probs[:, 1] = np.linspace(0, 1, n_windows)
+    probs[:, 0] = 1 - probs[:, 1]
+    co = ClassifierOutput(probabilities=probs, feature_rate=feature_rate, class_labels=["other", "target"])
+
+    viz = AudioVisualization(y=tone, sr=sr, classifier_output=co)
+    fig = viz.show(
+        start_time=0.0,
+        end_time=0.5,  # exactly one classifier window -- the failing case
+        tracks=(Track.SIMILARITY_LINES, Track.CLASS_PROBABILITY_STACK),
+        target_class="target",
+    )
+    similarity_ax, stack_ax = fig.axes
+
+    similarity_line = next(line for line in similarity_ax.get_lines() if line.get_color() == "tab:green")
+    assert len(similarity_line.get_xdata()) >= 2
+
+    # stackplot renders as PolyCollection(s) with actual filled area (not zero-width).
+    fig.canvas.draw()
+    poly_collections = list(stack_ax.collections)
+    assert poly_collections
+    total_vertices = sum(len(path.vertices) for c in poly_collections for path in c.get_paths())
+    assert total_vertices > 0

@@ -14,14 +14,14 @@ This library was extracted from the [elephant-rumble-inference](https://github.c
 
 ```bash
 
-!uv pip install "audio-classifier-visualizer[all] @ git+https://github.com/ramayer/audio-classifier-visualizer@v0.9.9-rc"
+!uv pip install "audio-classifier-visualizer[all] @ git+https://github.com/ramayer/audio-classifier-visualizer@v1.0.2"
 
-# For CUDA/cupy acceleration:
+# For CUDA/cupy acceleration of spectrograms:
 
-!uv pip install "audio-classifier-visualizer[all,gpu] @ git+https://github.com/ramayer/audio-classifier-visualizer@v0.9.9-rc"
+!uv pip install "audio-classifier-visualizer[all,gpu] @ git+https://github.com/ramayer/audio-classifier-visualizer@v1.0.2"
 
+# For feature reduced subsets:
 
-pip install audio-classifier-visualizer[all]        # STFT + wavelet + matplotlib
 pip install audio-classifier-visualizer[stft,plot]  # STFT only, no ssqueezepy
 pip install audio-classifier-visualizer[wavelet]     # just the CWT feature extractor, no plotting
 ```

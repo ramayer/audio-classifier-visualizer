@@ -47,6 +47,16 @@ class VisualizationSpec:
     title: str = ""
     display_offset: float = 0.0
 
+    # Wider-than-``audio`` buffer used only for spectrogram computation (STFT/CWT),
+    # so that analysis windows near the display boundary have real neighboring
+    # samples to work with instead of the feature extractors' own internal
+    # zero-padding -- see AudioVisualization._load_context_audio for how this gets
+    # built (real audio where available, reflect/edge-padded at true file
+    # boundaries). None means "no context available" (e.g. a hand-built spec) --
+    # renderers must fall back to computing directly on ``audio`` in that case.
+    context_audio: AudioSignal | None = None
+    context_seconds: float = 0.0
+
     labels: list[LabelBox] = field(default_factory=list)
     point_labels: list[PointLabel] = field(default_factory=list)
     classifier_output: ClassifierOutput | None = None

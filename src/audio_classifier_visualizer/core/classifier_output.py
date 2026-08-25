@@ -86,6 +86,29 @@ class ClassifierOutput:
             time_offset=self.index_to_time(start_idx),
         )
 
+    def slice_time_with_margin(self, start_time: float, end_time: float, margin_windows: int = 1) -> ClassifierOutput:
+        """Like ``slice_time``, but includes ``margin_windows`` extra windows on each
+        side (clamped at the real start/end of the data) beyond what strictly falls
+        in [start_time, end_time).
+
+        Exists for display: a display range narrower than one window's duration --
+        or just unluckily aligned -- can contain zero or one classifier windows.
+        ``SIMILARITY_LINES`` (a line plot) and ``CLASS_PROBABILITY_STACK`` (a filled
+        area) both need at least two points to render anything visible at all; a
+        single point with no marker style is invisible, not just imprecise. The
+        margin windows get clipped back to the display range visually (the renderer
+        sets the axes' xlim explicitly), so this only ever improves how the edges
+        look -- it never shows data outside the requested range.
+        """
+        start_idx = max(0, self.time_to_index(start_time) - margin_windows)
+        end_idx = min(self.n_windows, self.time_to_index(end_time) + margin_windows)
+        return ClassifierOutput(
+            probabilities=self.probabilities[start_idx:end_idx].copy(),
+            feature_rate=self.feature_rate,
+            class_labels=self.class_labels,
+            time_offset=self.index_to_time(start_idx),
+        )
+
     def resample_class_to(
         self,
         class_index: int,
