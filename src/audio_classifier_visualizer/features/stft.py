@@ -25,6 +25,22 @@ class STFTFeatureExtractor:
         self.hop_length = hop_length or n_fft // 4
         self.freq_range_of_interest = freq_range_of_interest
 
+    def with_overrides(self, **kwargs) -> STFTFeatureExtractor:
+        """A shallow copy with the given fields changed -- for a one-off .show()
+        call without mutating the shared extractor (which persists across calls
+        and is what direct attribute assignment, e.g. ``viz.stft.n_fft = 512``,
+        is for). Raises AttributeError on an unknown field name rather than
+        silently creating a new, unused attribute (most likely a typo)."""
+        import copy
+
+        new = copy.copy(self)
+        for key, value in kwargs.items():
+            if not hasattr(new, key):
+                msg = f"{type(self).__name__} has no attribute {key!r} to override"
+                raise AttributeError(msg)
+            setattr(new, key, value)
+        return new
+
     def compute(self, y: np.ndarray, sr: float) -> STFTResult:
         import librosa
 

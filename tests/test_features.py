@@ -88,3 +88,32 @@ def test_confidence_to_rgb_rejects_unknown_style():
     grayscale = np.zeros((2, 2))
     with pytest.raises(ValueError, match="Unknown colorize style"):
         confidence_to_rgb(grayscale, np.zeros(2), np.zeros(2), style="not-a-style")
+
+
+def test_stft_with_overrides_returns_new_object_without_mutating_original():
+    original = STFTFeatureExtractor(n_fft=2048, hop_length=512)
+    overridden = original.with_overrides(n_fft=512)
+    assert overridden.n_fft == 512
+    assert overridden.hop_length == 512  # unspecified fields carried over
+    assert original.n_fft == 2048  # original untouched
+
+
+def test_stft_with_overrides_rejects_unknown_field():
+    original = STFTFeatureExtractor()
+    with pytest.raises(AttributeError, match="n_ftt"):
+        original.with_overrides(n_ftt=512)  # typo
+
+
+def test_wavelet_with_overrides_returns_new_object_without_mutating_original():
+    original = WaveletFeatureExtractor(decimation_stride=1024, synchrosqueeze=False)
+    overridden = original.with_overrides(synchrosqueeze=True, decimation_stride=64)
+    assert overridden.synchrosqueeze is True
+    assert overridden.decimation_stride == 64
+    assert original.synchrosqueeze is False
+    assert original.decimation_stride == 1024
+
+
+def test_wavelet_with_overrides_rejects_unknown_field():
+    original = WaveletFeatureExtractor()
+    with pytest.raises(AttributeError):
+        original.with_overrides(not_a_real_field=123)

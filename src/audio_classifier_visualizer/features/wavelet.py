@@ -56,6 +56,23 @@ class WaveletFeatureExtractor:
         self.overlap = overlap
         self._wavelet = None  # lazily constructed; ssqueezepy import deferred to first use
 
+    def with_overrides(self, **kwargs) -> WaveletFeatureExtractor:
+        """A shallow copy with the given fields changed -- see
+        STFTFeatureExtractor.with_overrides for the full rationale (same pattern,
+        same reasoning). Note the copied ``_wavelet`` (if already constructed) is
+        shared by reference with the original, same as any other shallow copy;
+        that's fine since it's derived only from the wavelet *type*, which
+        with_overrides doesn't change anything that would invalidate it for."""
+        import copy
+
+        new = copy.copy(self)
+        for key, value in kwargs.items():
+            if not hasattr(new, key):
+                msg = f"{type(self).__name__} has no attribute {key!r} to override"
+                raise AttributeError(msg)
+            setattr(new, key, value)
+        return new
+
     def _ensure_ssqueezepy(self):
         try:
             import ssqueezepy as sqz
