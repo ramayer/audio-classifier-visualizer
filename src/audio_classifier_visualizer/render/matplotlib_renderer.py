@@ -8,7 +8,9 @@ without touching this file or anything in core/features.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
+import warnings
 
 import numpy as np
 
@@ -18,6 +20,12 @@ from audio_classifier_visualizer.render.spec import Track, VisualizationSpec
 logger = logging.getLogger(__name__)
 
 _TICK_INTERVALS = ((1, 0.25), (3, 0.5), (10, 1), (60, 5), (300, 30), (600, 60), (3600, 300), (7200, 600))
+
+# Tracks that only make sense with a classifier_output attached -- both the new
+# CLASS_PROBABILITIES/CLASS_HEATMAP and the two deprecated aliases they replace.
+_CLASSIFIER_TRACKS = frozenset(
+    {Track.CLASS_PROBABILITIES, Track.CLASS_HEATMAP, Track.SIMILARITY_LINES, Track.CLASS_PROBABILITY_STACK}
+)
 
 
 def _tick_interval(duration: float) -> float:
@@ -72,6 +80,12 @@ class MatplotlibRenderer:
                 plot longer.
         """
         self.waveform_envelope_threshold = waveform_envelope_threshold
+        # Stable class -> color mapping across separate .show() calls (and across
+        # CLASS_PROBABILITIES vs. any other line-based track): a class gets the
+        # same color the first time it's ever drawn by this renderer instance and
+        # keeps it, rather than colors being reassigned per-figure based on
+        # whatever happens to be selected that call.
+        self._class_colors: dict[str, tuple] = {}
 
     def render(
         self,
@@ -89,11 +103,12 @@ class MatplotlibRenderer:
             Track.WAVEFORM: 2,
             Track.STFT_SPECTROGRAM: 3,
             Track.WAVELET_SPECTROGRAM: 3,
+            Track.CLASS_PROBABILITIES: 2,
+            Track.CLASS_HEATMAP: 2.5,
             Track.SIMILARITY_LINES: 1,
             Track.CLASS_PROBABILITY_STACK: 2,
         }
-        tracks = [t for t in spec.tracks if t != Track.SIMILARITY_LINES or spec.classifier_output is not None]
-        tracks = [t for t in tracks if t != Track.CLASS_PROBABILITY_STACK or spec.classifier_output is not None]
+        tracks = [t for t in spec.tracks if t not in _CLASSIFIER_TRACKS or spec.classifier_output is not None]
         ratios = [height_per_track[t] for t in tracks]
 
         fig, axes = plt.subplots(
@@ -118,7 +133,7 @@ class MatplotlibRenderer:
         last_ax.set_xticks(
             np.arange(spec.start_time - (spec.start_time % interval), spec.end_time + interval, interval)
         )
-        last_ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _pos: spec.audio.time_axis.format_relative(x)))
+        last_ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _pos: self._format_tick(spec, x)))
         # set_xticks on a sharex=True group re-expands the shared xlim to include any
         # tick location outside the current view (confirmed against matplotlib
         # directly) -- undoing the set_xlim() calls above. Re-assert it last, after
@@ -127,8 +142,8 @@ class MatplotlibRenderer:
         for ax in axes:
             ax.set_xlim(spec.start_time, spec.end_time)
 
-        fig.suptitle(spec.title, fontsize=16, ha="left", x=0)
-        right_margin = 0.85 if Track.CLASS_PROBABILITY_STACK in tracks else 0.98
+        fig.suptitle(self._title_with_date(spec), fontsize=16, ha="left", x=0)
+        right_margin = 0.85 if any(t in _CLASSIFIER_TRACKS for t in tracks) else 0.98
         plt.subplots_adjust(top=0.93, left=0.06, right=right_margin)
 
         if save_file:
@@ -151,10 +166,32 @@ class MatplotlibRenderer:
             self._draw_spectrogram(ax, spec, wavelet=False)
         elif track == Track.WAVELET_SPECTROGRAM:
             self._draw_spectrogram(ax, spec, wavelet=True)
+        elif track == Track.CLASS_PROBABILITIES:
+            self._draw_class_probabilities(ax, spec)
+        elif track == Track.CLASS_HEATMAP:
+            self._draw_class_heatmap(ax, spec)
         elif track == Track.SIMILARITY_LINES:
-            self._draw_similarity_lines(ax, spec)
+            warnings.warn(
+                "Track.SIMILARITY_LINES is deprecated and will be removed in a future "
+                "release; use Track.CLASS_PROBABILITIES(classes=[target_class]) instead "
+                "(drops the redundant inverse line -- define two classes that sum to 1 "
+                "if you want that look back).",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            effective = dataclasses.replace(spec, classes=[self._target_class_name(spec)], top_k=None)
+            self._draw_class_probabilities(ax, effective)
         elif track == Track.CLASS_PROBABILITY_STACK:
-            self._draw_class_probability_stack(ax, spec)
+            warnings.warn(
+                "Track.CLASS_PROBABILITY_STACK is deprecated and will be removed in a "
+                "future release; use Track.CLASS_PROBABILITIES instead (unstacked -- "
+                "stacking made any one class's own trend hard to read independent of "
+                "whatever was stacked below it).",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            effective = dataclasses.replace(spec, classes=list(spec.classifier_output.class_labels), top_k=None)
+            self._draw_class_probabilities(ax, effective)
         else:
             msg = f"Unhandled track type: {track}"
             raise ValueError(msg)
@@ -358,28 +395,104 @@ class MatplotlibRenderer:
         ascending_idxs = np.arange(len(freqs) - 1, -1, -1)
         return float(np.interp(freq_hz, ascending_freqs, ascending_idxs))
 
-    def _draw_similarity_lines(self, ax, spec: VisualizationSpec) -> None:
-        co = spec.classifier_output
-        target_class = co.class_index(spec.target_class if spec.target_class is not None else 1)
-        similarity = co.probabilities[:, target_class]
-        dissimilarity = 1 - similarity
-        # window_centers() is already absolute (includes co.time_offset, which is the
-        # *actual* rounded-to-window-boundary start of this slice) -- do not add
-        # spec.display_offset here too, that would double-count it and reintroduce
-        # the quantization-drift bug this was fixed for.
-        t = co.window_centers()
-        ax.plot(t, similarity, color="tab:green")
-        ax.plot(t, dissimilarity, color="tab:red")
-        ax.set_ylabel(co.class_labels[target_class])
+    def _format_tick(self, spec: VisualizationSpec, relative_seconds: float) -> str:
+        """Clock-time ticks (HH:MM:SS, in whatever display_timezone is set) when the
+        audio has a known real-world anchor; otherwise the existing relative
+        H:MM:SS.sss-from-start-of-clip formatting."""
+        axis = spec.audio.time_axis
+        if axis.has_absolute_time:
+            return axis.format_absolute(relative_seconds)
+        return axis.format_relative(relative_seconds)
 
-    def _draw_class_probability_stack(self, ax, spec: VisualizationSpec) -> None:
+    def _title_with_date(self, spec: VisualizationSpec) -> str:
+        """Append the date to the title when displaying clock-time ticks -- once,
+        in the title, rather than repeating it on every tick label."""
+        axis = spec.audio.time_axis
+        if not axis.has_absolute_time:
+            return spec.title
+        date_str = axis.display_date(spec.start_time)
+        if date_str in spec.title:
+            return spec.title  # caller already put a/the date in the title themselves
+        return f"{spec.title} — {date_str}" if spec.title else date_str
+
+    def _target_class_name(self, spec: VisualizationSpec) -> str:
         co = spec.classifier_output
-        t = co.window_centers()  # already absolute -- see _draw_similarity_lines
-        ax.stackplot(t, co.probabilities.T, labels=co.class_labels)
-        # Right-of-axes (not below): a legend anchored below its own axes only has
-        # room when that axes happens to be the bottommost thing on the figure --
-        # with any other track after it (e.g. SIMILARITY_LINES), that track's own
-        # axes gets drawn right over the legend. Right-side placement uses space
-        # reserved once, in `render()`, regardless of track order.
-        ax.legend(loc="center left", bbox_to_anchor=(1.01, 0.5), prop={"size": 8})
-        ax.set_ylabel("Cls Prob")
+        idx = co.class_index(spec.target_class if spec.target_class is not None else 1)
+        return co.class_labels[idx]
+
+    def _select_classes(self, spec: VisualizationSpec) -> list[str]:
+        """Resolve which classes CLASS_PROBABILITIES/CLASS_HEATMAP should show.
+
+        Explicit ``classes`` wins if given. Otherwise ``top_k`` selects by peak
+        probability within the *currently displayed* window (spec.classifier_output
+        is already sliced -- with a little margin -- to the display range by
+        AudioVisualization, so this naturally recomputes on every zoom rather than
+        being fixed at load time). With neither given, all classes are shown,
+        uncapped -- what the deprecated CLASS_PROBABILITY_STACK alias relies on to
+        preserve its old behavior; direct use of the new tracks should usually set
+        top_k for anything with more than a handful of classes.
+        """
+        co = spec.classifier_output
+        if spec.classes is not None:
+            return list(spec.classes)
+        if spec.top_k is not None:
+            peak = co.probabilities.max(axis=0)
+            order = np.argsort(peak)[::-1][: spec.top_k]
+            return [co.class_labels[i] for i in order]
+        return list(co.class_labels)
+
+    def _class_color(self, name: str):
+        if name not in self._class_colors:
+            import matplotlib.pyplot as plt
+
+            palette = plt.get_cmap("tab20").colors
+            self._class_colors[name] = palette[len(self._class_colors) % len(palette)]
+        return self._class_colors[name]
+
+    def _draw_class_probabilities(self, ax, spec: VisualizationSpec) -> None:
+        """Overlaid (not stacked) per-class probability lines. Any number of
+        classes can be near 1.0 at once -- e.g. a hierarchical "DOG" and "MAMMAL"
+        both reading ~100% -- since nothing here assumes they sum to 1."""
+        co = spec.classifier_output
+        selected = self._select_classes(spec)
+        t = co.window_centers()  # already absolute -- see the wavelet/STFT crop comment
+        for name in selected:
+            idx = co.class_index(name)
+            ax.plot(t, co.probabilities[:, idx], color=self._class_color(name), label=name, linewidth=1.2)
+        ax.set_ylim(0, 1)
+        if len(selected) == 1:
+            # Matches the old SIMILARITY_LINES look for the common single-class
+            # case: the y-label already says what this is, a one-entry legend
+            # would just take up space for no benefit.
+            ax.set_ylabel(selected[0])
+        else:
+            ax.set_ylabel("Cls Prob")
+            ax.legend(loc="center left", bbox_to_anchor=(1.01, 0.5), prop={"size": 8})
+
+    def _draw_class_heatmap(self, ax, spec: VisualizationSpec) -> None:
+        """Class-on-y-axis, time-on-x, color = probability. Scales to far more
+        classes than an overlaid line chart can stay readable with; rows are
+        sorted by peak probability within the displayed window (most locally
+        relevant classes near the top), not by class_labels' original order."""
+        co = spec.classifier_output
+        selected = self._select_classes(spec)
+        idxs = [co.class_index(name) for name in selected]
+        peaks = co.probabilities[:, idxs].max(axis=0)
+        order = np.argsort(peaks)[::-1]
+        names_sorted = [selected[i] for i in order]
+        data = co.probabilities[:, [idxs[i] for i in order]].T  # (n_classes, n_windows)
+
+        centers = co.window_centers()
+        im = ax.imshow(
+            data,
+            aspect="auto",
+            cmap="viridis",
+            vmin=0,
+            vmax=1,
+            origin="upper",
+            extent=(centers[0], centers[-1], len(names_sorted), 0),
+        )
+        ax.set_yticks(np.arange(len(names_sorted)) + 0.5)
+        ax.set_yticklabels(names_sorted, fontsize=8)
+        cbar = ax.figure.colorbar(im, ax=ax, pad=0.02, fraction=0.05)
+        cbar.ax.tick_params(labelsize=8)

@@ -64,7 +64,10 @@ class AudioSignal:
         if self.time_axis.has_absolute_time:
             from audio_classifier_visualizer.core.time_axis import TimeAxis as _TA
 
-            new_axis = _TA(absolute_start=self.time_axis.to_absolute(start_time))
+            new_axis = _TA(
+                absolute_start=self.time_axis.to_absolute(start_time),
+                display_timezone=self.time_axis.display_timezone,
+            )
         return AudioSignal(
             samples=self.samples[:, start_idx:end_idx].copy(),
             sr=self.sr,

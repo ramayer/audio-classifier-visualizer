@@ -215,3 +215,36 @@ def test_slice_time_with_margin_time_offset_still_correct():
     sliced = co.slice_time_with_margin(1.0, 1.5, margin_windows=1)
     # window index 2 is real window for t=[1.0,1.5); margin includes index 1 and 3.
     np.testing.assert_allclose(sliced.window_centers(), co.window_centers()[1:4])
+
+
+def test_time_axis_format_absolute_uses_display_timezone():
+    from datetime import datetime, timezone
+
+    from audio_classifier_visualizer.core.time_axis import TimeAxis
+
+    # 2024-01-01 00:00:00 UTC -> 2023-12-31 16:00:00 in America/Los_Angeles (UTC-8, winter)
+    start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    axis = TimeAxis(absolute_start=start, display_timezone="America/Los_Angeles")
+    assert axis.format_absolute(0.0) == "16:00:00"
+    assert axis.format_absolute(0.0, include_date=True) == "2023-12-31 16:00:00"
+
+
+def test_time_axis_format_absolute_defaults_to_anchor_timezone():
+    from datetime import datetime, timezone
+
+    from audio_classifier_visualizer.core.time_axis import TimeAxis
+
+    start = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    axis = TimeAxis(absolute_start=start)  # no display_timezone override
+    assert axis.format_absolute(0.0) == "12:00:00"
+
+
+def test_time_axis_display_date_uses_display_timezone():
+    from datetime import datetime, timezone
+
+    from audio_classifier_visualizer.core.time_axis import TimeAxis
+
+    # Just after UTC midnight -> still the previous day in US Pacific.
+    start = datetime(2024, 1, 1, 2, 0, 0, tzinfo=timezone.utc)
+    axis = TimeAxis(absolute_start=start, display_timezone="America/Los_Angeles")
+    assert axis.display_date(0.0) == "2023-12-31"

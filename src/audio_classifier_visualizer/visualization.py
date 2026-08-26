@@ -40,6 +40,7 @@ class AudioVisualization:
         sr: float | None = None,
         *,
         absolute_start: datetime | None = None,
+        display_timezone: str | None = None,
         classifier_output: ClassifierOutput | None = None,
         labels: list[LabelBox] | None = None,
         point_labels: list[PointLabel] | None = None,
@@ -48,6 +49,18 @@ class AudioVisualization:
         renderer: Renderer | None = None,
         target_sr: float | None = None,
     ) -> None:
+        """
+        Args:
+            absolute_start: real-world time that sample 0 of the audio corresponds
+                to. Enables clock-time axis labels (see display_timezone) and
+                absolute-time label/point queries; omit for audio with no known
+                real-world anchor (e.g. synthetic data).
+            display_timezone: IANA timezone name (e.g. "America/Los_Angeles") axis
+                labels/titles should read in, independent of whatever timezone
+                absolute_start itself is expressed in (usually UTC) -- so the same
+                recording can be viewed in different local timezones without
+                re-anchoring. None displays in absolute_start's own timezone.
+        """
         if audio_file is None and (y is None or sr is None):
             msg = "Provide either audio_file, or both y and sr."
             raise ValueError(msg)
@@ -62,8 +75,11 @@ class AudioVisualization:
         if absolute_start is not None and self._preloaded_signal is not None:
             from audio_classifier_visualizer.core.time_axis import TimeAxis
 
-            self._preloaded_signal.time_axis = TimeAxis(absolute_start=absolute_start)
+            self._preloaded_signal.time_axis = TimeAxis(
+                absolute_start=absolute_start, display_timezone=display_timezone
+            )
         self._absolute_start = absolute_start
+        self._display_timezone = display_timezone
         self.classifier_output = classifier_output
         self.labels = labels or []
         self.point_labels = point_labels or []
@@ -97,6 +113,7 @@ class AudioVisualization:
                 end_time=end_time,
                 absolute_start=self._absolute_start,
                 target_sr=self._target_sr,
+                display_timezone=self._display_timezone,
             )
         else:
             signal = self._preloaded_signal.slice_time(start_time, end_time)
@@ -170,6 +187,8 @@ class AudioVisualization:
         end_time: float | None = None,
         tracks: tuple[Track, ...] = DEFAULT_TRACKS,
         target_class: str | int | None = None,
+        classes: list[str] | None = None,
+        top_k: int | None = None,
         colorize_style: str = "bright",
         per_channel_normalize: bool = True,
         clip_outliers: bool = True,
@@ -200,6 +219,8 @@ class AudioVisualization:
             point_labels=point_labels_in_range,
             classifier_output=classifier_slice,
             target_class=target_class,
+            classes=classes,
+            top_k=top_k,
             stft=self.stft,
             wavelet=self.wavelet,
             colorize_style=colorize_style,
@@ -214,6 +235,8 @@ class AudioVisualization:
         end_time: float | None = None,
         tracks: tuple[Track, ...] = DEFAULT_TRACKS,
         target_class: str | int | None = None,
+        classes: list[str] | None = None,
+        top_k: int | None = None,
         colorize_style: str = "bright",
         per_channel_normalize: bool = True,
         clip_outliers: bool = True,
@@ -227,6 +250,8 @@ class AudioVisualization:
             end_time=end_time,
             tracks=tracks,
             target_class=target_class,
+            classes=classes,
+            top_k=top_k,
             colorize_style=colorize_style,
             per_channel_normalize=per_channel_normalize,
             clip_outliers=clip_outliers,

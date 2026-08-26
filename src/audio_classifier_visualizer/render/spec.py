@@ -24,6 +24,15 @@ class Track(Enum):
     WAVEFORM = "waveform"
     STFT_SPECTROGRAM = "stft_spectrogram"
     WAVELET_SPECTROGRAM = "wavelet_spectrogram"
+    CLASS_PROBABILITIES = "class_probabilities"
+    CLASS_HEATMAP = "class_heatmap"
+
+    # Deprecated: kept so existing code keeps working. SIMILARITY_LINES ->
+    # CLASS_PROBABILITIES(classes=[target_class]) (drops the redundant inverse
+    # line -- define two classes that sum to 1 if you actually want that back).
+    # CLASS_PROBABILITY_STACK -> CLASS_PROBABILITIES(all classes), unstacked --
+    # stacking made it hard to read any one class's own trend independent of
+    # whatever was stacked below it. See MatplotlibRenderer._draw_track.
     SIMILARITY_LINES = "similarity_lines"
     CLASS_PROBABILITY_STACK = "class_probability_stack"
 
@@ -61,6 +70,16 @@ class VisualizationSpec:
     point_labels: list[PointLabel] = field(default_factory=list)
     classifier_output: ClassifierOutput | None = None
     target_class: str | int | None = None
+    classes: list[str] | None = None
+    """Explicit class selection for CLASS_PROBABILITIES/CLASS_HEATMAP. If both this
+    and top_k are None, all classes in classifier_output are shown (uncapped) --
+    that's what the deprecated CLASS_PROBABILITY_STACK alias relies on to preserve
+    old behavior; direct use of the new tracks should usually set top_k instead.
+    """
+    top_k: int | None = None
+    """Show only the top_k classes by peak probability within the *currently
+    displayed* window (recomputed on zoom, not fixed at load time) -- ignored if
+    ``classes`` is given explicitly."""
 
     stft: STFTFeatureExtractor = field(default_factory=STFTFeatureExtractor)
     wavelet: WaveletFeatureExtractor = field(default_factory=WaveletFeatureExtractor)
