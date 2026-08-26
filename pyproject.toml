@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "audio-classifier-visualizer"
-version = "1.0.2"
+version = "1.0.3"
 description = "Time-aligned visualization of waveforms, spectrograms, labels, and classifier output for long audio files."
 readme = "README.md"
 requires-python = ">=3.10"

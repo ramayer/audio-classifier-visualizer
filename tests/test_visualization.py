@@ -63,15 +63,17 @@ def test_show_with_classifier_output_and_labels(tone, sr):
     viz = AudioVisualization(y=tone, sr=sr, classifier_output=co, labels=labels)
     fig = viz.show(
         end_time=5.0,
-        tracks=(Track.WAVEFORM, Track.STFT_SPECTROGRAM, Track.SIMILARITY_LINES, Track.CLASS_PROBABILITY_STACK),
+        tracks=(Track.WAVEFORM, Track.STFT_SPECTROGRAM, Track.CLASS_PROBABILITIES, Track.CLASS_HEATMAP),
         target_class="target",
     )
-    assert len(fig.axes) == 4
+    # 4 requested tracks + 1 extra Axes matplotlib's colorbar() creates for
+    # CLASS_HEATMAP's color scale.
+    assert len(fig.axes) == 5
 
 
 def test_show_drops_classifier_tracks_when_no_classifier_output(tone, sr):
     viz = AudioVisualization(y=tone, sr=sr)
-    fig = viz.show(end_time=2.0, tracks=(Track.WAVEFORM, Track.SIMILARITY_LINES, Track.CLASS_PROBABILITY_STACK))
+    fig = viz.show(end_time=2.0, tracks=(Track.WAVEFORM, Track.CLASS_PROBABILITIES, Track.CLASS_HEATMAP))
     assert len(fig.axes) == 1
 
 
@@ -157,8 +159,8 @@ def test_clip_outliers_flag_reaches_spec(tone, sr):
     assert spec_off.clip_outliers is False
 
 
-def test_class_probability_stack_legend_does_not_overlap_next_track(tone, sr):
-    """Regression test: with CLASS_PROBABILITY_STACK not the last track, its legend
+def test_class_probabilities_legend_does_not_overlap_next_track(tone, sr):
+    """Regression test: with CLASS_PROBABILITIES not the last track, its legend
     must not land in the same figure region as the track drawn after it."""
     n_windows = 20
     probs = np.random.default_rng(0).dirichlet(np.ones(3), n_windows)
@@ -166,17 +168,17 @@ def test_class_probability_stack_legend_does_not_overlap_next_track(tone, sr):
     viz = AudioVisualization(y=tone, sr=sr, classifier_output=co)
     fig = viz.show(
         end_time=5.0,
-        tracks=(Track.CLASS_PROBABILITY_STACK, Track.SIMILARITY_LINES),
+        tracks=(Track.CLASS_PROBABILITIES, Track.WAVEFORM),
     )
-    stack_ax, similarity_ax = fig.axes
+    probs_ax, waveform_ax = fig.axes
     renderer = _agg_renderer(fig)
-    legend = stack_ax.get_legend()
+    legend = probs_ax.get_legend()
     assert legend is not None
     legend_bbox = legend.get_window_extent(renderer=renderer)
-    similarity_bbox = similarity_ax.get_window_extent(renderer=renderer)
+    waveform_bbox = waveform_ax.get_window_extent(renderer=renderer)
     # The legend must sit to the right of (not vertically overlapping into) the
     # next track's axes.
-    assert legend_bbox.x0 >= similarity_bbox.x1 - 1  # small tolerance for pixel rounding
+    assert legend_bbox.x0 >= waveform_bbox.x1 - 1  # small tolerance for pixel rounding
 
 
 def test_similarity_line_crossing_stable_across_non_aligned_zoom(tone, sr):
@@ -192,9 +194,10 @@ def test_similarity_line_crossing_stable_across_non_aligned_zoom(tone, sr):
 
     def crossing_time(start_time, end_time):
         viz = AudioVisualization(y=tone, sr=sr, classifier_output=co)
-        fig = viz.show(
-            start_time=start_time, end_time=end_time, tracks=(Track.SIMILARITY_LINES,), target_class="target"
-        )
+        with pytest.warns(DeprecationWarning):
+            fig = viz.show(
+                start_time=start_time, end_time=end_time, tracks=(Track.SIMILARITY_LINES,), target_class="target"
+            )
         line = fig.axes[0].lines[0]  # similarity (green) line
         xdata, ydata = np.asarray(line.get_xdata()), np.asarray(line.get_ydata())
         # The rendered line only has the actual data points; the 0.5 crossing is
@@ -579,7 +582,12 @@ def test_waveform_short_clip_spans_full_requested_range(sr):
 def test_similarity_and_class_stack_render_when_display_window_narrower_than_one_classifier_window(tone, sr):
     """Regression test for the reported bug: zooming to a range narrower than one
     classifier window (or just unluckily aligned to contain only one) must still
-    show visible SIMILARITY_LINES / CLASS_PROBABILITY_STACK content, not nothing."""
+    show visible SIMILARITY_LINES / CLASS_PROBABILITY_STACK content, not nothing.
+
+    Both tracks are deprecated aliases for CLASS_PROBABILITIES now (single-class
+    for SIMILARITY_LINES, all-classes-unstacked for CLASS_PROBABILITY_STACK) --
+    this test asserts on line presence/content, not the old stackplot/two-line
+    rendering specifics."""
     feature_rate = 2.0  # 0.5s windows
     n_windows = 20
     probs = np.zeros((n_windows, 2))
@@ -588,20 +596,163 @@ def test_similarity_and_class_stack_render_when_display_window_narrower_than_one
     co = ClassifierOutput(probabilities=probs, feature_rate=feature_rate, class_labels=["other", "target"])
 
     viz = AudioVisualization(y=tone, sr=sr, classifier_output=co)
-    fig = viz.show(
-        start_time=0.0,
-        end_time=0.5,  # exactly one classifier window -- the failing case
-        tracks=(Track.SIMILARITY_LINES, Track.CLASS_PROBABILITY_STACK),
-        target_class="target",
-    )
+    with pytest.warns(DeprecationWarning):
+        fig = viz.show(
+            start_time=0.0,
+            end_time=0.5,  # exactly one classifier window -- the failing case
+            tracks=(Track.SIMILARITY_LINES, Track.CLASS_PROBABILITY_STACK),
+            target_class="target",
+        )
     similarity_ax, stack_ax = fig.axes
 
-    similarity_line = next(line for line in similarity_ax.get_lines() if line.get_color() == "tab:green")
-    assert len(similarity_line.get_xdata()) >= 2
+    similarity_lines = similarity_ax.get_lines()
+    assert len(similarity_lines) == 1  # single target class, no redundant inverse line
+    assert len(similarity_lines[0].get_xdata()) >= 2  # the actual regression: >=2 points, not 0 or 1
 
-    # stackplot renders as PolyCollection(s) with actual filled area (not zero-width).
-    fig.canvas.draw()
-    poly_collections = list(stack_ax.collections)
-    assert poly_collections
-    total_vertices = sum(len(path.vertices) for c in poly_collections for path in c.get_paths())
-    assert total_vertices > 0
+    stack_lines = stack_ax.get_lines()
+    assert len(stack_lines) == 2  # both classes, each its own line
+    assert all(len(line.get_xdata()) >= 2 for line in stack_lines)
+
+
+def test_class_probabilities_default_shows_all_classes(tone, sr):
+    co = ClassifierOutput(
+        probabilities=np.random.default_rng(0).uniform(0, 1, (10, 5)),
+        feature_rate=2.0,
+        class_labels=["a", "b", "c", "d", "e"],
+    )
+    viz = AudioVisualization(y=tone, sr=sr, classifier_output=co)
+    fig = viz.show(end_time=5.0, tracks=(Track.CLASS_PROBABILITIES,))
+    assert len(fig.axes[0].get_lines()) == 5
+
+
+def test_class_probabilities_top_k_selects_by_peak_in_displayed_window(tone, sr):
+    """top_k must be recomputed on the *displayed* window, not fixed globally --
+    a class that peaks outside the display range shouldn't crowd out one that's
+    locally relevant just because it's globally louder."""
+    n_windows = 20  # 10s at feature_rate=2
+    probs = np.zeros((n_windows, 3))
+    probs[:, 0] = 0.9  # "loud" globally, but flat/uninteresting throughout
+    probs[15:, 1] = 1.0  # "late" -- peaks late, outside an early display window
+    probs[0:5, 2] = 1.0  # "early" -- peaks early, inside an early display window
+    co = ClassifierOutput(probabilities=probs, feature_rate=2.0, class_labels=["loud", "late", "early"])
+
+    viz = AudioVisualization(y=tone, sr=sr, classifier_output=co)
+    fig = viz.show(end_time=2.5, tracks=(Track.CLASS_PROBABILITIES,), top_k=2)  # early window only
+    ax = fig.axes[0]
+    shown = {line.get_label() for line in ax.get_lines()}
+    assert "early" in shown  # locally relevant, must be included
+    assert "late" not in shown  # not locally relevant to this window
+
+
+def test_class_probabilities_allows_multiple_classes_near_one(tone, sr):
+    """No renormalization anywhere -- e.g. a hierarchical 'DOG' and 'MAMMAL' both
+    reading ~100% at once is legitimate, not a bug to correct for."""
+    probs = np.ones((10, 2)) * 0.95  # both classes near 1.0 simultaneously
+    co = ClassifierOutput(probabilities=probs, feature_rate=2.0, class_labels=["DOG", "MAMMAL"])
+    viz = AudioVisualization(y=tone, sr=sr, classifier_output=co)
+    fig = viz.show(end_time=5.0, tracks=(Track.CLASS_PROBABILITIES,))
+    ax = fig.axes[0]
+    for line in ax.get_lines():
+        assert np.all(np.asarray(line.get_ydata()) > 0.9)
+
+
+def test_class_colors_are_stable_across_separate_show_calls(tone, sr):
+    """A class must get the same color every time it's drawn by the same renderer
+    instance, whether that's the same .show() call or a later one."""
+    co = ClassifierOutput(
+        probabilities=np.random.default_rng(0).uniform(0, 1, (10, 3)),
+        feature_rate=2.0,
+        class_labels=["a", "b", "c"],
+    )
+    viz = AudioVisualization(y=tone, sr=sr, classifier_output=co)
+    fig1 = viz.show(end_time=5.0, tracks=(Track.CLASS_PROBABILITIES,), classes=["a", "b"])
+    colors_first = {line.get_label(): line.get_color() for line in fig1.axes[0].get_lines()}
+
+    fig2 = viz.show(end_time=5.0, tracks=(Track.CLASS_PROBABILITIES,), classes=["b", "c"])
+    colors_second = {line.get_label(): line.get_color() for line in fig2.axes[0].get_lines()}
+
+    assert colors_first["b"] == colors_second["b"]
+
+
+def test_class_heatmap_renders_with_class_labels_on_yaxis(tone, sr):
+    co = ClassifierOutput(
+        probabilities=np.random.default_rng(0).uniform(0, 1, (10, 4)),
+        feature_rate=2.0,
+        class_labels=["w", "x", "y", "z"],
+    )
+    viz = AudioVisualization(y=tone, sr=sr, classifier_output=co)
+    fig = viz.show(end_time=5.0, tracks=(Track.CLASS_HEATMAP,))
+    ax = fig.axes[0]
+    assert len(ax.get_images()) == 1
+    yticklabels = {t.get_text() for t in ax.get_yticklabels()}
+    assert yticklabels == {"w", "x", "y", "z"}
+
+
+def test_class_heatmap_sorts_rows_by_peak_probability(tone, sr):
+    n_windows = 10
+    probs = np.zeros((n_windows, 3))
+    probs[:, 0] = 0.1  # low
+    probs[:, 1] = 0.9  # high -- should sort to the top
+    probs[:, 2] = 0.5  # medium
+    co = ClassifierOutput(probabilities=probs, feature_rate=2.0, class_labels=["low", "high", "medium"])
+    viz = AudioVisualization(y=tone, sr=sr, classifier_output=co)
+    fig = viz.show(end_time=5.0, tracks=(Track.CLASS_HEATMAP,))
+    ax = fig.axes[0]
+    ordered_labels = [t.get_text() for t in ax.get_yticklabels()]
+    assert ordered_labels == ["high", "medium", "low"]
+
+
+def test_show_uses_clock_time_ticks_when_absolute_start_given(wav_path):
+    from datetime import datetime, timezone
+
+    start = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+    viz = AudioVisualization(audio_file=wav_path, absolute_start=start, display_timezone="America/Los_Angeles")
+    fig = viz.show(end_time=1.0, tracks=(Track.WAVEFORM,))
+    ax = fig.axes[0]
+    label = ax.xaxis.get_major_formatter()(ax.get_xticks()[0])
+    # 12:00:00 UTC -> 05:00:00 America/Los_Angeles (UTC-7, summer/PDT)
+    assert label == "05:00:00"
+
+
+def test_show_appends_date_to_title_when_using_clock_time(wav_path):
+    from datetime import datetime, timezone
+
+    start = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+    viz = AudioVisualization(audio_file=wav_path, absolute_start=start, display_timezone="America/Los_Angeles")
+    fig = viz.show(end_time=1.0, tracks=(Track.WAVEFORM,), title="a recording")
+    assert "2024-06-01" in fig._suptitle.get_text()  # 12:00 UTC -> 05:00 PDT, same day
+    assert "a recording" in fig._suptitle.get_text()
+
+
+def test_show_does_not_duplicate_date_already_in_title(wav_path):
+    from datetime import datetime, timezone
+
+    start = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+    viz = AudioVisualization(audio_file=wav_path, absolute_start=start, display_timezone="America/Los_Angeles")
+    fig = viz.show(end_time=1.0, tracks=(Track.WAVEFORM,), title="2024-05-31 field recording")
+    assert fig._suptitle.get_text().count("2024-05-31") == 1
+
+
+def test_show_uses_relative_ticks_without_absolute_start(wav_path):
+    """No absolute_start given -> unchanged relative H:MM:SS.sss formatting."""
+    viz = AudioVisualization(audio_file=wav_path)
+    fig = viz.show(end_time=1.0, tracks=(Track.WAVEFORM,))
+    ax = fig.axes[0]
+    label = ax.xaxis.get_major_formatter()(ax.get_xticks()[0])
+    assert ":" in label
+    assert label.count(":") <= 1  # relative MM:SS format, not clock HH:MM:SS
+
+
+def test_slice_time_preserves_display_timezone(tone, sr):
+    """Regression test: AudioSignal.slice_time originally dropped display_timezone
+    when constructing the sliced signal's own TimeAxis."""
+    from datetime import datetime, timezone
+
+    from audio_classifier_visualizer.core.audio_signal import AudioSignal
+    from audio_classifier_visualizer.core.time_axis import TimeAxis
+
+    start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    axis = TimeAxis(absolute_start=start, display_timezone="America/Los_Angeles")
+    signal = AudioSignal(samples=tone, sr=sr, time_axis=axis)
+    sliced = signal.slice_time(1.0, 2.0)
+    assert sliced.time_axis.display_timezone == "America/Los_Angeles"

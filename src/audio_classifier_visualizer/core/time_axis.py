@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,9 +21,19 @@ class TimeAxis:
     ``absolute_start`` is optional. If it is None, this audio has no known
     real-world anchor (e.g. synthetic test data) and absolute-time queries
     raise rather than silently returning nonsense.
+
+    ``display_timezone`` is deliberately a *separate* concept from
+    ``absolute_start``'s own tzinfo: storage/computation stays anchored to
+    whatever timezone (usually UTC) the data was recorded with, while
+    ``display_timezone`` controls only what timezone axis labels/formatting
+    read in -- so the same underlying recording can be viewed in different
+    local timezones without re-anchoring or re-loading anything. An IANA name
+    (e.g. "America/Los_Angeles"), or None to display in absolute_start's own
+    timezone (UTC if it's naive).
     """
 
     absolute_start: datetime | None = None
+    display_timezone: str | None = None
 
     def to_absolute(self, relative_seconds: float) -> datetime:
         if self.absolute_start is None:
@@ -59,3 +70,28 @@ class TimeAxis:
         if hours or always_show_hours:
             return f"{sign}{hours}:{minutes:02d}:{sec_str}"
         return f"{sign}{minutes:02d}:{sec_str}"
+
+    def format_absolute(self, relative_seconds: float, *, include_date: bool = False) -> str:
+        """Human ``HH:MM:SS`` clock-time formatting, in ``display_timezone`` if set.
+
+        ``include_date`` prepends the date (``YYYY-MM-DD``) -- meant for the one
+        tick/title where the date is worth stating once, not every tick (that's
+        what a chart title showing the date is for).
+        """
+        when = self.to_absolute(relative_seconds)
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        if self.display_timezone is not None:
+            when = when.astimezone(ZoneInfo(self.display_timezone))
+        fmt = "%Y-%m-%d %H:%M:%S" if include_date else "%H:%M:%S"
+        return when.strftime(fmt)
+
+    def display_date(self, relative_seconds: float) -> str:
+        """The date (``YYYY-MM-DD``, in display_timezone) that a given relative time
+        falls on -- for putting once in a title rather than repeating on every tick."""
+        when = self.to_absolute(relative_seconds)
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        if self.display_timezone is not None:
+            when = when.astimezone(ZoneInfo(self.display_timezone))
+        return when.strftime("%Y-%m-%d")

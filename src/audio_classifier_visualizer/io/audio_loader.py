@@ -11,7 +11,7 @@ formats), but is not required for the common WAV/FLAC case.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import numpy as np
 
@@ -26,8 +26,17 @@ def load_audio(
     end_time: float | None = None,
     target_sr: float | None = None,
     absolute_start: datetime | None = None,
+    display_timezone: str | None = None,
 ) -> AudioSignal:
     """Load a (possibly multichannel) audio file, optionally just a time range of it.
+
+    ``absolute_start`` is the real-world time of sample 0 of the *whole file*, not
+    of whatever ``start_time``-offset slice you're loading -- the returned
+    signal's own TimeAxis anchor is shifted by ``start_time`` accordingly, so its
+    relative time 0 correctly maps to the real time of the first *loaded* sample.
+    (Getting this wrong looks exactly like the family of edge-alignment bugs this
+    library has hit before: silently correct at start_time=0, subtly off by
+    exactly start_time everywhere else.)
 
     Raises the underlying soundfile error if the file can't be opened;
     callers wanting the librosa fallback path can catch that and call
@@ -48,7 +57,8 @@ def load_audio(
     if target_sr is not None and target_sr != sr:
         samples, sr = _resample(samples, sr, target_sr)
 
-    axis = TimeAxis(absolute_start=absolute_start)
+    slice_absolute_start = absolute_start + timedelta(seconds=start_time) if absolute_start else None
+    axis = TimeAxis(absolute_start=slice_absolute_start, display_timezone=display_timezone)
     return AudioSignal(samples=samples, sr=sr, time_axis=axis, source_path=path)
 
 
@@ -59,8 +69,10 @@ def load_audio_via_librosa(
     end_time: float | None = None,
     target_sr: float | None = None,
     absolute_start: datetime | None = None,
+    display_timezone: str | None = None,
 ) -> AudioSignal:
-    """Fallback loader for formats libsndfile can't read. Mixes down to mono like the old default."""
+    """Fallback loader for formats libsndfile can't read. Mixes down to mono like
+    the old default. See ``load_audio`` for ``absolute_start``'s semantics."""
     import librosa
 
     y, sr = librosa.load(
@@ -70,7 +82,8 @@ def load_audio_via_librosa(
         duration=None if end_time is None else end_time - start_time,
         mono=True,
     )
-    axis = TimeAxis(absolute_start=absolute_start)
+    slice_absolute_start = absolute_start + timedelta(seconds=start_time) if absolute_start else None
+    axis = TimeAxis(absolute_start=slice_absolute_start, display_timezone=display_timezone)
     return AudioSignal(samples=y[np.newaxis, :], sr=sr, time_axis=axis, source_path=path)
 
 
