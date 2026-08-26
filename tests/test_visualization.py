@@ -66,9 +66,11 @@ def test_show_with_classifier_output_and_labels(tone, sr):
         tracks=(Track.WAVEFORM, Track.STFT_SPECTROGRAM, Track.CLASS_PROBABILITIES, Track.CLASS_HEATMAP),
         target_class="target",
     )
-    # 4 requested tracks + 1 extra Axes matplotlib's colorbar() creates for
-    # CLASS_HEATMAP's color scale.
-    assert len(fig.axes) == 5
+    # 4 requested tracks, each its own Axes -- CLASS_HEATMAP's colorbar lives in an
+    # inset_axes (a child of its own track's Axes, not a new top-level one), so it
+    # doesn't add an entry here; that's what keeps all 4 tracks the same width and
+    # aligned on the shared time axis.
+    assert len(fig.axes) == 4
 
 
 def test_show_drops_classifier_tracks_when_no_classifier_output(tone, sr):
@@ -756,3 +758,60 @@ def test_slice_time_preserves_display_timezone(tone, sr):
     signal = AudioSignal(samples=tone, sr=sr, time_axis=axis)
     sliced = signal.slice_time(1.0, 2.0)
     assert sliced.time_axis.display_timezone == "America/Los_Angeles"
+
+
+def test_class_heatmap_stays_aligned_with_other_tracks(tone, sr):
+    """Regression test: CLASS_HEATMAP's colorbar must not shrink its own Axes --
+    otherwise its plot area ends up narrower than (and visually misaligned with)
+    every other track sharing the same time axis."""
+    co = ClassifierOutput(
+        probabilities=np.random.default_rng(0).uniform(0, 1, (10, 3)),
+        feature_rate=2.0,
+        class_labels=["a", "b", "c"],
+    )
+    viz = AudioVisualization(y=tone, sr=sr, classifier_output=co)
+    fig = viz.show(end_time=5.0, tracks=(Track.WAVEFORM, Track.CLASS_HEATMAP))
+    waveform_ax, heatmap_ax = fig.axes
+    fig.canvas.draw()
+    x0_wave, x1_wave = waveform_ax.get_position().x0, waveform_ax.get_position().x1
+    x0_heat, x1_heat = heatmap_ax.get_position().x0, heatmap_ax.get_position().x1
+    assert x0_wave == pytest.approx(x0_heat, abs=1e-6)
+    assert x1_wave == pytest.approx(x1_heat, abs=1e-6)
+
+
+def test_class_probabilities_ylim_has_margin_around_zero_and_one(tone, sr):
+    """Regression test: a class pinned at exactly 0 or 1 must not have its line
+    sitting flush against (and visually covered by) the axes spine."""
+    probs = np.zeros((10, 2))
+    probs[:, 0] = 0.0
+    probs[:, 1] = 1.0
+    co = ClassifierOutput(probabilities=probs, feature_rate=2.0, class_labels=["never", "always"])
+    viz = AudioVisualization(y=tone, sr=sr, classifier_output=co)
+    fig = viz.show(end_time=5.0, tracks=(Track.CLASS_PROBABILITIES,))
+    ax = fig.axes[0]
+    ylim = ax.get_ylim()
+    assert ylim[0] < 0.0
+    assert ylim[1] > 1.0
+
+
+def test_show_stft_override_does_not_mutate_persistent_extractor(tone, sr):
+    viz = AudioVisualization(y=tone, sr=sr)
+    original_n_fft = viz.stft.n_fft
+    viz.show(end_time=1.0, tracks=(Track.STFT_SPECTROGRAM,), stft=viz.stft.with_overrides(n_fft=512))
+    assert viz.stft.n_fft == original_n_fft  # persistent extractor untouched
+
+    # And the override actually took effect for that call's rendering.
+    fig = viz.show(end_time=1.0, tracks=(Track.STFT_SPECTROGRAM,), stft=viz.stft.with_overrides(n_fft=512))
+    ax = fig.axes[0]
+    n_freq_bins = ax.get_images()[0].get_array().shape[0]
+    assert n_freq_bins == 512 // 2 + 1
+
+
+def test_show_wavelet_override_sizes_context_padding_correctly(tone, sr):
+    """A temporary wavelet override with a larger 'overlap' must get correspondingly
+    larger edge-context padding for that call -- not whatever self.wavelet.overlap
+    happens to be."""
+    viz = AudioVisualization(y=tone, sr=sr)
+    overridden_wavelet = viz.wavelet.with_overrides(overlap=4000)
+    spec = viz.build_spec(start_time=1.0, end_time=2.0, wavelet=overridden_wavelet)
+    assert spec.context_seconds >= 4000 / sr

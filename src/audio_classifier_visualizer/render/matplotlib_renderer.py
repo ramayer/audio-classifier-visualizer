@@ -459,7 +459,7 @@ class MatplotlibRenderer:
         for name in selected:
             idx = co.class_index(name)
             ax.plot(t, co.probabilities[:, idx], color=self._class_color(name), label=name, linewidth=1.2)
-        ax.set_ylim(0, 1)
+        ax.set_ylim(-0.1, 1.1)  # small margin so 0/1 values aren't covered by the axes spine
         if len(selected) == 1:
             # Matches the old SIMILARITY_LINES look for the common single-class
             # case: the y-label already says what this is, a one-entry legend
@@ -494,5 +494,12 @@ class MatplotlibRenderer:
         )
         ax.set_yticks(np.arange(len(names_sorted)) + 0.5)
         ax.set_yticklabels(names_sorted, fontsize=8)
-        cbar = ax.figure.colorbar(im, ax=ax, pad=0.02, fraction=0.05)
+        # Explicit cax via inset_axes (positioned just outside ax, in axes-fraction
+        # coordinates) rather than colorbar(im, ax=ax, ...) -- the latter shrinks ax
+        # itself to make room, which is exactly why this track's plot area ended up
+        # narrower than every other track's and visibly misaligned on the shared
+        # time axis. inset_axes draws into the margin already reserved (in
+        # render()) for classifier tracks' legends/colorbars, leaving ax full width.
+        cax = ax.inset_axes((1.02, 0.0, 0.02, 1.0))
+        cbar = ax.figure.colorbar(im, cax=cax)
         cbar.ax.tick_params(labelsize=8)

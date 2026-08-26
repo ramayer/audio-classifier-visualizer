@@ -134,7 +134,9 @@ class AudioVisualization:
 
         return float(sf.info(self._audio_file).samplerate)
 
-    def _context_seconds(self) -> float:
+    def _context_seconds(
+        self, stft: STFTFeatureExtractor | None = None, wavelet: WaveletFeatureExtractor | None = None
+    ) -> float:
         """How much real (or, failing that, reflect/edge-padded) audio to fetch on
         each side of the requested display range before computing STFT/CWT, so
         that analysis windows near the display boundary have genuine neighboring
@@ -143,10 +145,17 @@ class AudioVisualization:
         Sized to the larger of what STFT (half its FFT window) and the wavelet
         extractor (its own chunk-overlap) need -- both are already-meaningful
         quantities the user may have tuned, not new knobs to configure separately.
+
+        Accepts explicit ``stft``/``wavelet`` (falling back to ``self.stft``/
+        ``self.wavelet``) so a one-off ``show(stft=..., wavelet=...)`` override
+        gets correctly-sized context padding for *that* call's parameters, not
+        whatever the persistent extractors happen to be configured with.
         """
+        stft = stft if stft is not None else self.stft
+        wavelet = wavelet if wavelet is not None else self.wavelet
         sr = self._effective_sr()
-        stft_context = (self.stft.n_fft / 2) / sr
-        wavelet_context = self.wavelet.overlap / sr
+        stft_context = (stft.n_fft / 2) / sr
+        wavelet_context = wavelet.overlap / sr
         return max(stft_context, wavelet_context)
 
     def _load_context_audio(self, start_time: float, end_time: float, context_seconds: float) -> AudioSignal:
@@ -193,7 +202,21 @@ class AudioVisualization:
         per_channel_normalize: bool = True,
         clip_outliers: bool = True,
         title: str = "",
+        stft: STFTFeatureExtractor | None = None,
+        wavelet: WaveletFeatureExtractor | None = None,
     ) -> VisualizationSpec:
+        """
+        Args:
+            stft: use this extractor for just this call instead of self.stft --
+                for a one-off override (e.g. via ``self.stft.with_overrides(...)``)
+                without mutating the persistent ``self.stft`` that every other
+                call still uses. Direct attribute assignment (``viz.stft.n_fft =
+                512``) remains the way to change it persistently.
+            wavelet: same, for self.wavelet.
+        """
+        effective_stft = stft if stft is not None else self.stft
+        effective_wavelet = wavelet if wavelet is not None else self.wavelet
+
         if end_time is None:
             end_time = self.duration
         signal = self._load_slice(start_time, end_time)
@@ -205,7 +228,7 @@ class AudioVisualization:
         labels_in_range = [box for box in self.labels if box.overlaps(start_time, end_time)]
         point_labels_in_range = [p for p in self.point_labels if p.in_range(start_time, end_time)]
 
-        context_seconds = self._context_seconds()
+        context_seconds = self._context_seconds(effective_stft, effective_wavelet)
         context_audio = self._load_context_audio(start_time, end_time, context_seconds)
 
         return VisualizationSpec(
@@ -221,8 +244,8 @@ class AudioVisualization:
             target_class=target_class,
             classes=classes,
             top_k=top_k,
-            stft=self.stft,
-            wavelet=self.wavelet,
+            stft=effective_stft,
+            wavelet=effective_wavelet,
             colorize_style=colorize_style,
             per_channel_normalize=per_channel_normalize,
             clip_outliers=clip_outliers,
@@ -244,6 +267,8 @@ class AudioVisualization:
         width: float = 19.2,
         height: float = 12.8,
         save_file: str | None = None,
+        stft: STFTFeatureExtractor | None = None,
+        wavelet: WaveletFeatureExtractor | None = None,
     ):
         spec = self.build_spec(
             start_time=start_time,
@@ -256,5 +281,7 @@ class AudioVisualization:
             per_channel_normalize=per_channel_normalize,
             clip_outliers=clip_outliers,
             title=title,
+            stft=stft,
+            wavelet=wavelet,
         )
         return self.renderer.render(spec, width=width, height=height, save_file=save_file)
